@@ -1,0 +1,419 @@
+---
+title: Middleware reference
+description: Every middleware in the default pipeline — what it does, how to configure it, and what each setting affects.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+This page documents each middleware in Quiote's default pipeline, **in execution order**: what it does, the settings it reads, and what those settings affect. For the conceptual overview see [The middleware pipeline](/architecture/middleware-pipeline/); for adding your own, [Writing custom middleware](/advanced/custom-middleware/).
+
+## How middleware is configured
+
+Middleware draws configuration from four distinct places — this page is explicit about which applies to each:
+
+- **`core.*` settings** — read via `Config::get('core.…')` from your [`settings` config](/architecture/configuration/) (PHP/YAML/XML). Most tunables live here.
+- **Enable/disable** — **any** middleware can be switched off via a `<middleware_config>` block (see [Enabling and disabling](#enabling-and-disabling) below). Each middleware's `#[Middleware(enabled:)]` attribute sets its default (all default to on); a config entry overrides it.
+- **Environment variables** — one middleware (`PayloadParsingMiddleware`) reads an OS env var.
+- **Constructor arguments** — some behaviour is only reachable by constructing the middleware yourself (a custom pipeline), with no config-file switch. Called out where it applies.
+
+## At a glance
+
+Every middleware defaults to on and can be disabled via `<middleware_config>` (see [Enabling and disabling](#enabling-and-disabling)); this column lists only *other* configuration.
+
+| # | Middleware | Configurable |
+|---|---|---|
+| 1 | ErrorHandlingMiddleware | `core.developer_exceptions` |
+| 2 | TelemetryMiddleware | `telemetry.*` (see [Telemetry](/architecture/telemetry/)) |
+| 3 | SessionMiddleware | — (storage via `factories`) |
+| 4 | TimingMiddleware | — |
+| 5 | TraceMiddleware | — |
+| 6 | PayloadParsingMiddleware | `QUIOTE_JSON_STRICT` env |
+| 7 | ContentNegotiationMiddleware | — |
+| 8 | RoutingMiddleware | — (uses `routing.http_method_map`) |
+| 9 | OutputTypeSyncMiddleware | — |
+| 10 | CsrfInjectionMiddleware | `core.csrf.*` |
+| 11 | CsrfValidationMiddleware | `core.csrf.*` |
+| 12 | SecurityMiddleware | `core.use_security` |
+| 13 | ValidationMiddleware | `core.expose_validation_errors_header`, `validation.*` |
+| 14 | SlotMiddleware | — |
+| 15 | DispatchMiddleware | `core.cache_enabled`, `core.use_cache`, response-header keys |
+| 16 | AssetAggregationMiddleware | — |
+| 17 | FormPopulationMiddleware | — (per-request state) |
+| 18 | ExecutionTimeMiddleware | — |
+
+All `core.*` and `validation.*`/`routing.*` keys can be written in any config format — see [Configuration](/architecture/configuration/). Examples below use `settings.php`.
+
+---
+
+## ErrorHandlingMiddleware
+
+Outermost middleware. Catches any throwable from anything downstream and renders an error response. Runs by default (attribute phase `bootstrap`, priority 1000 — first in the stack).
+
+| Setting | Default | Effect |
+|---|---|---|
+| `core.developer_exceptions` | `false` | Selects the error renderer: `true` → a detailed Whoops developer page; `false` → a safe generic response that leaks no internals. This is the *sole* signal — there is no environment-name sniffing or separate debug env var. |
+
+Turn on the developer error page (never in production):
+
+<Tabs syncKey="config-format">
+<TabItem label="PHP">
+
+```php
+// Config/settings.php
+'core.developer_exceptions' => true,
+```
+
+</TabItem>
+<TabItem label="YAML">
+
+```yaml
+# Config/settings.yaml
+core.developer_exceptions: true
+```
+
+</TabItem>
+<TabItem label="XML">
+
+```xml
+<!-- Config/settings.xml -->
+<settings>
+  <setting name="developer_exceptions">true</setting>
+</settings>
+```
+
+</TabItem>
+</Tabs>
+
+The logger is wired as a constructor closure to `Quiote\Logging\Log`; there is no config switch for it short of replacing the pipeline.
+
+## TelemetryMiddleware
+
+Second in the stack (phase `bootstrap`, priority 950 — just inside `ErrorHandlingMiddleware`). When telemetry is enabled it opens the root request span and records the resource metrics (wall time, CPU, memory, cache-hit). When telemetry is off it's a single pass-through, so it's always safe to leave in the pipeline.
+
+Its behaviour is driven entirely by the `telemetry.*` settings (and by whether the OpenTelemetry SDK is installed) — it has no settings of its own. The full settings table, sampling, spans, and log correlation are documented in **[Telemetry](/architecture/telemetry/)**.
+
+## SessionMiddleware
+
+Starts/persists session storage and guarantees an `ExecutionState` request attribute exists. Skipped for JWT-authenticated requests. Runs by default.
+
+**No settings of its own.** Whether the session actually persists depends on the `storage` role in your [`factories` config](/architecture/configuration/) — `SessionStorage`, `PdoSessionStorage`, or `NullStorage`. That is storage configuration, not middleware configuration.
+
+## TimingMiddleware
+
+Records total request time into `ExecutionState` metrics, optionally emitting an `X-Quiote-Timing` response header. A common one to disable in production — see [Enabling and disabling](#enabling-and-disabling).
+
+**The header is off by default.** It's controlled by the constructor flag `emitHeader` (default `false`), and the pipeline builds `new TimingMiddleware(false)` — there is no `Config` key for it. To turn it on, re-register the class with your own factory (a `register()` for a framework FQCN wins over the built-in, keeping its attribute-declared position isn't automatic — pass a `before`/`after` hint to place it):
+
+```php
+use Quiote\Middleware\{MiddlewareCatalog, TimingMiddleware, TraceMiddleware};
+
+MiddlewareCatalog::register(
+    TimingMiddleware::class,
+    fn() => new TimingMiddleware(emitHeader: true),
+    before: TraceMiddleware::class,   // keep it near the top, where the default sits
+);
+```
+
+The pipeline logs a warning noting the class is both attribute-scannable and `register()`-ed — expected here, since that's exactly how `register()` takes over. See [Writing custom middleware](/advanced/custom-middleware/#register-vs-registerattributed).
+
+## TraceMiddleware
+
+Appends each executed middleware's name to `ExecutionState` metrics (a running trace), optionally emitting an `X-Quiote-Trace` response header. A common one to disable in production.
+
+**The header is off by default**, exactly like `TimingMiddleware`. Its constructor is `new TraceMiddleware(bool $emitHeader = false, ?string $headerName = 'X-Quiote-Trace')`, and the pipeline builds it with the header off. Re-register to turn it on (and, optionally, rename the header):
+
+```php
+use Quiote\Middleware\{MiddlewareCatalog, TraceMiddleware, PayloadParsingMiddleware};
+
+MiddlewareCatalog::register(
+    TraceMiddleware::class,
+    fn() => new TraceMiddleware(emitHeader: true, headerName: 'X-Trace'),
+    before: PayloadParsingMiddleware::class,
+);
+```
+
+## PayloadParsingMiddleware
+
+Unified request-body parser (JSON plus `application/x-www-form-urlencoded`), run before routing. Runs by default. Supersedes the older `JsonBodyParsingMiddleware`.
+
+| Env var | Default | Effect |
+|---|---|---|
+| `QUIOTE_JSON_STRICT` | strict on (unless set to `0`) | When strict and a JSON body is invalid, the request short-circuits with `400 {"error":"invalid_json"}`. When non-strict (`QUIOTE_JSON_STRICT=0`), invalid JSON is ignored and the request proceeds unparsed. |
+
+This is an **OS environment variable**, not a `Config` key:
+
+```bash
+QUIOTE_JSON_STRICT=0   # tolerate malformed JSON bodies instead of 400-ing
+```
+
+## ContentNegotiationMiddleware
+
+Determines the negotiated output format (from URL extension or `Accept` header) before routing, storing `output_type` / `output_formats` request attributes. Runs by default. See [Output types](/basics/output-types-and-content-negotiation/).
+
+**No exposed configuration.** The fallback format (`html`) is a hardcoded class default.
+
+## RoutingMiddleware
+
+Matches the request path, attaches `module` / `action` / `output_type` and an `ActionDescriptor`. Runs by default.
+
+**No settings of its own.** It calls `HttpMethodMapper`, which reads `routing.http_method_map` — how you remap HTTP verbs to action methods is documented in [Routing → Customising the HTTP verb mapping](/basics/routing/#customising-the-http-verb-mapping).
+
+## OutputTypeSyncMiddleware
+
+After routing resolves (or overrides) the output type, re-syncs the controller's selection to match the `output_type` request attribute. Runs by default. **No configuration.**
+
+## CsrfInjectionMiddleware
+
+Wraps the response to inject CSRF tokens into HTML forms, a `<meta>` tag, and the readable `XSRF-TOKEN` cookie. Runs by default; its behaviour is gated at runtime by `core.csrf.enabled`.
+
+## CsrfValidationMiddleware
+
+Rejects unsafe-method requests with 403 unless a valid token is present. Runs by default; gated by `core.csrf.enabled`. Both CSRF middleware read the same settings:
+
+| Setting | Default | Effect |
+|---|---|---|
+| `core.csrf.enabled` | `true` | Master on/off for both injection and validation. |
+| `core.csrf.token_id` | `'quiote_csrf'` | Token-id namespace for the Symfony token manager. |
+| `core.csrf.field_name` | `'_csrf_token'` | Hidden form field injected into non-GET forms and read on submit. |
+| `core.csrf.header_name` | `'X-CSRF-Token'` | Header that XHR/fetch/API clients send the token in. |
+| `core.csrf.cookie_name` | `'XSRF-TOKEN'` | Readable (non-HttpOnly) cookie delivering the token to SPA clients. |
+| `core.csrf.safe_methods` | `['GET','HEAD','OPTIONS','TRACE']` | Methods that skip validation (compared case-insensitively). |
+
+<Tabs syncKey="config-format">
+<TabItem label="PHP">
+
+```php
+// Config/settings.php
+'core.csrf.enabled'      => true,
+'core.csrf.field_name'   => '_csrf_token',
+'core.csrf.header_name'  => 'X-CSRF-Token',
+'core.csrf.cookie_name'  => 'XSRF-TOKEN',
+'core.csrf.safe_methods' => ['GET', 'HEAD', 'OPTIONS', 'TRACE'],
+```
+
+</TabItem>
+<TabItem label="YAML">
+
+```yaml
+# Config/settings.yaml
+core.csrf.enabled: true
+core.csrf.field_name: _csrf_token
+core.csrf.header_name: X-CSRF-Token
+core.csrf.cookie_name: XSRF-TOKEN
+core.csrf.safe_methods: [GET, HEAD, OPTIONS, TRACE]
+```
+
+</TabItem>
+<TabItem label="XML">
+
+```xml
+<!-- Config/settings.xml — csrf.* lands under core. with no prefix wrapper -->
+<settings>
+  <setting name="csrf.enabled">true</setting>
+  <setting name="csrf.field_name">_csrf_token</setting>
+  <setting name="csrf.header_name">X-CSRF-Token</setting>
+  <setting name="csrf.cookie_name">XSRF-TOKEN</setting>
+  <setting name="csrf.safe_methods">
+    <ae:parameter>GET</ae:parameter>
+    <ae:parameter>HEAD</ae:parameter>
+    <ae:parameter>OPTIONS</ae:parameter>
+    <ae:parameter>TRACE</ae:parameter>
+  </setting>
+</settings>
+```
+
+</TabItem>
+</Tabs>
+
+The pipeline comment "gated at runtime by `core.csrf.enabled`" is documentation only — both middleware are always constructed and check `CsrfManager::isEnabled()` themselves. Per-route opt-out uses an `_csrf => false` route default. See [Authentication & authorization → CSRF](/advanced/authentication-authorization/#csrf-protection).
+
+## SecurityMiddleware
+
+Decides, before dispatch, whether a request may run its action — forwarding to `login` or `secure` otherwise. Runs by default.
+
+| Setting | Default | Effect |
+|---|---|---|
+| `core.use_security` | `true` | If `false`, `SecurityDecision::Allow` is forced unconditionally — `SecurityService::decide()` is never consulted and all security checks are bypassed. |
+
+Per-action security is declared with `isSecure()` / `getCredentials()` — see [Authentication & authorization](/advanced/authentication-authorization/).
+
+## ValidationMiddleware
+
+Runs the action's validators and records a pass/fail decision; renders the error view (or an RFC 9457 problem document) with 400 on failure. Runs by default. See [Validation](/basics/validation/).
+
+| Setting | Default | Effect |
+|---|---|---|
+| `core.expose_validation_errors_header` | `false` | If `true`, attaches a base64-encoded JSON of validator errors as `X-Quiote-Validation-Errors` on a 400. Off by default — it leaks internal field/validator structure; use only behind a trusted dev front end. |
+| `validation.reject_unknown_parameters` | `'throw'` | Compile-time (not per-request) handling of a validator parameter not in the validator's accepted list: `'throw'` aborts the compile with a "did you mean" hint, `'warn'` logs and records a diagnostic then continues, `'off'` skips the check. |
+
+Note `validation.reject_unknown_parameters` lives under the `validation.` prefix, not `core.` — in XML that means a second `<settings prefix="validation.">` wrapper (see [Configuration → The XML `prefix` attribute](/architecture/configuration/#the-xml-prefix-attribute)):
+
+<Tabs syncKey="config-format">
+<TabItem label="PHP">
+
+```php
+// Config/settings.php
+'core.expose_validation_errors_header' => false,
+'validation.reject_unknown_parameters' => 'warn',
+```
+
+</TabItem>
+<TabItem label="YAML">
+
+```yaml
+# Config/settings.yaml
+core.expose_validation_errors_header: false
+validation.reject_unknown_parameters: warn
+```
+
+</TabItem>
+<TabItem label="XML">
+
+```xml
+<!-- Config/settings.xml -->
+<settings>
+  <setting name="expose_validation_errors_header">false</setting>
+</settings>
+<settings prefix="validation.">
+  <setting name="reject_unknown_parameters">warn</setting>
+</settings>
+```
+
+</TabItem>
+</Tabs>
+
+## SlotMiddleware
+
+Establishes a slot stack so a view can render sub-actions (slots). Runs by default. **No configuration.** See [Templates and rendering → Slots](/basics/templates-and-rendering/#slots-embedding-one-action-in-another).
+
+## DispatchMiddleware
+
+Runs the action through `ActionExecutor`, handles action/view caching, and builds the final PSR-7 response. Runs by default — effectively terminal.
+
+| Setting | Default | Effect |
+|---|---|---|
+| `core.cache_enabled` | `false` | Master switch for action/view caching. |
+| `core.use_cache` | `false` | Whether a cache instance is actually built to service the request. |
+| `core.disable-framework-headers` | `false` | If truthy, skips the framework response-header block entirely (both headers below). |
+| `core.cache-hit-header` | `'X-Quiote-Cache-Hit'` | Header name sent (value `1`) on a cache hit. Empty value suppresses it. |
+| `core.send-nosniff-header` | `true` | Whether `X-Content-Type-Options: nosniff` is added when absent. |
+
+Caching requires **both** `core.cache_enabled` and `core.use_cache` to be true:
+
+<Tabs syncKey="config-format">
+<TabItem label="PHP">
+
+```php
+// Config/settings.php
+'core.cache_enabled' => true,
+'core.use_cache'     => true,
+```
+
+</TabItem>
+<TabItem label="YAML">
+
+```yaml
+# Config/settings.yaml
+core.cache_enabled: true
+core.use_cache: true
+```
+
+</TabItem>
+<TabItem label="XML">
+
+```xml
+<!-- Config/settings.xml -->
+<settings>
+  <setting name="cache_enabled">true</setting>
+  <setting name="use_cache">true</setting>
+</settings>
+```
+
+</TabItem>
+</Tabs>
+
+`DispatchMiddleware` also applies the resolved output type's `http_headers` to the response. That is an output-type parameter (see [Output types](/basics/output-types-and-content-negotiation/)), not a `core.*` setting.
+
+## AssetAggregationMiddleware
+
+Post-processes the response to aggregate assets. Currently a pass-through placeholder. Runs by default. **No configuration.**
+
+## FormPopulationMiddleware
+
+Re-fills submitted form values and error messages into HTML responses (so a failed submission doesn't lose input). Runs by default.
+
+**No global settings.** Its behaviour keys off `Quiote\Util\FormPopulationConfig`, a per-request state object (flags like `force_request_uri`), not a `settings` key.
+
+## ExecutionTimeMiddleware
+
+Measures execution time and (for legacy-adapter responses) can append an `<!-- exec_time=… -->` comment. The HTML-comment behaviour is on by default in the class but the framework never disables it via config.
+
+---
+
+## Enabling and disabling
+
+**Any** middleware can be switched off through the middleware map in your `config_handlers` config. A disabled middleware is never constructed. Each middleware's `#[Middleware(enabled:)]` attribute sets its default (all framework middleware default to on); an entry here overrides that default.
+
+The map lives in `config_handlers`: in XML it's a `<middleware_config>` element (alongside `<handlers>`); in PHP/YAML it's the reserved `__middleware_config` key (a map of FQCN → bool). Because `config_handlers` ships as a framework default, an app typically supplies only this addition.
+
+<Tabs syncKey="config-format">
+<TabItem label="PHP">
+
+```php
+// Config/config_handlers.php
+return [
+    '__middleware_config' => [
+        'Quiote\\Middleware\\ExecutionTimeMiddleware' => false,
+        'Quiote\\Middleware\\TimingMiddleware'        => true,
+    ],
+    // ...handler definitions...
+];
+```
+
+</TabItem>
+<TabItem label="YAML">
+
+```yaml
+# Config/config_handlers.yaml
+__middleware_config:
+  'Quiote\Middleware\ExecutionTimeMiddleware': false
+  'Quiote\Middleware\TimingMiddleware': true
+# ...handler definitions...
+```
+
+</TabItem>
+<TabItem label="XML">
+
+```xml
+<!-- Config/config_handlers.xml -->
+<ae:configurations xmlns:ae="http://quiote.dev/quiote/config/global/envelope/1.1"
+                   xmlns="http://quiote.dev/quiote/config/parts/config_handlers/1.1">
+  <ae:configuration>
+    <middleware_config>
+      <middleware class="Quiote\Middleware\ExecutionTimeMiddleware" enabled="false" />
+      <middleware class="Quiote\Middleware\TimingMiddleware" enabled="true" />
+    </middleware_config>
+    <handlers><!-- ... --></handlers>
+  </ae:configuration>
+</ae:configurations>
+```
+
+</TabItem>
+</Tabs>
+
+- `class` (XML) / the map key (PHP/YAML) — the exact middleware FQCN to toggle.
+- `enabled` (XML attribute) — optional, default `"true"`. `"0"` / `"false"` / `"off"` / `"no"` (case-insensitive) count as disabled; anything else (or omitting it) is enabled. The PHP/YAML value is a plain boolean.
+
+A class with no entry falls back to its attribute's `enabled` default, so an entry is only needed to *change* the default. Disabling a core middleware (say CSRF or Security) removes real protection — do it deliberately.
+
+:::note
+XML is the usual form for `config_handlers` (it's what the framework default ships as). The PHP/YAML forms carry the identical `__middleware_config` map, but a full `config_handlers` file also defines the config handlers themselves — extend the default rather than replacing it wholesale.
+:::
+
+## Adding, reordering, and replacing
+
+Positioning your own middleware, and the whole-stack replacement API, are covered in [Writing custom middleware](/advanced/custom-middleware/):
+
+- The `#[Middleware]` attribute + `MiddlewareCatalog::registerAttributed()` — declare placement and join the framework's ordering pass.
+- `MiddlewareCatalog::register()` — insert a middleware imperatively at a chosen point.
+- `MiddlewareCatalog::replaceCoreStack()` — replace the entire built-in stack (a deliberate footgun, gated behind an acknowledgement string).

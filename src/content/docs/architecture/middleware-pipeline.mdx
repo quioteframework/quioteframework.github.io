@@ -1,0 +1,123 @@
+---
+title: The middleware pipeline
+description: What lives in Quiote's PSR-15 pipeline, in what order, and what each middleware does.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+Quiote handles every request through a single PSR-15 middleware pipeline. Where Agavi had a global/action filter chain, Quiote has an ordered list of standard PSR-15 middlewares run by [Relay](https://relayphp.com/). The pipeline is built once per worker (`Quiote\Middleware\MiddlewarePipeline`) and reused across requests.
+
+This is the heart of Quiote's "no magic" stance: routing, security, validation, CSRF, and dispatch are each a named object in a list you can print with `MiddlewarePipeline::debugStack()`.
+
+## The stack, in order
+
+Middlewares run outermost-first on the way in, and unwind on the way out. The order is:
+
+```
+ErrorHandlingMiddleware       ← outermost; catches everything
+TelemetryMiddleware           ← root request span + resource metrics (no-op when telemetry off)
+SessionMiddleware
+TimingMiddleware
+TraceMiddleware
+PayloadParsingMiddleware
+ContentNegotiationMiddleware
+RoutingMiddleware             ← route is known after this
+OutputTypeSyncMiddleware
+CsrfInjectionMiddleware
+CsrfValidationMiddleware
+SecurityMiddleware            ← authentication / authorization
+ValidationMiddleware
+SlotMiddleware
+DispatchMiddleware            ← runs the action (effectively terminal)
+AssetAggregationMiddleware
+FormPopulationMiddleware
+ExecutionTimeMiddleware
+```
+
+This order is not hand-maintained: each middleware carries a `#[Middleware(phase:, priority:, before:, after:)]` attribute, and the pipeline computes the order from them (a scanner reads the attributes; a topological resolver sorts by phase, then `before`/`after` constraints, then priority). The list above is what those attributes currently resolve to. Application middleware can join the same ordering — see [Writing custom middleware](/advanced/custom-middleware/#option-2--the-middleware-attribute).
+
+After the attribute-ordered stack, any middleware added imperatively with `MiddlewareCatalog::register()` is spliced in at its requested position, followed by a terminal sentinel that throws if the pipeline ever runs off the end without producing a response.
+
+## What each middleware does
+
+**ErrorHandlingMiddleware** — the outermost wrapper. Catches any `Throwable` from anything below it and renders a response (a developer error page when `core.developer_exceptions` is on, a safe generic page otherwise). It also logs the failure with request context.
+
+**TelemetryMiddleware** — when telemetry is enabled, opens the root request span and records the resource metrics (time, CPU, memory); a pass-through no-op when off. See [Telemetry](/architecture/telemetry/).
+
+**SessionMiddleware** — starts/attaches the session storage for the request so downstream middlewares (CSRF, security) can read and write it.
+
+**TimingMiddleware / TraceMiddleware** — optional diagnostics. Each is only built if enabled via `<middleware_config>`. `TimingMiddleware` records phase timings; `TraceMiddleware` records a request trace.
+
+**PayloadParsingMiddleware** — parses the request body: JSON bodies and form bodies become the parsed body / parameters that validation and actions read.
+
+**ContentNegotiationMiddleware** — decides the output type (`html`, `json`, …) from the URL extension or the `Accept` header, and records it on the request. Runs before routing so routing can still override it. See [Output types](/basics/output-types-and-content-negotiation/).
+
+**RoutingMiddleware** — matches the path against the routing table, extracts `_module` / `_action`, maps the HTTP verb to an action-method token, and builds an `ActionDescriptor`. After this, the target action is known.
+
+**OutputTypeSyncMiddleware** — reconciles the output type chosen by negotiation with any output type fixed by the matched route.
+
+**CsrfInjectionMiddleware** — wraps the response to inject CSRF tokens into rendered HTML forms and to set the readable `XSRF-TOKEN` cookie for SPA clients. Placed early so it post-processes the final HTML on the way out.
+
+**CsrfValidationMiddleware** — on unsafe methods (non GET/HEAD/OPTIONS/TRACE), rejects the request with 403 unless a valid token is present. Per-route opt-out via `_csrf => false`. Both CSRF middlewares are gated by `core.csrf.enabled`.
+
+**SecurityMiddleware** — authentication and authorization. For a secure action, it checks the user is authenticated and holds the required credentials, and forwards to the login or "secure" action otherwise. See [Authentication and authorization](/advanced/authentication-authorization/).
+
+**ValidationMiddleware** — runs the action's validators (compiled/PHP and XML) plus manual `validate()` methods, and records a `ValidationDecision`. On failure it renders the action's error view (or an RFC 9457 problem document for JSON) with a 400. See [Validation](/basics/validation/).
+
+**SlotMiddleware** — prepares sub-action ("slot") rendering, so a view can embed the output of another action.
+
+**DispatchMiddleware** — the core. Runs the action through `ActionExecutor`, renders the view, and builds the PSR-7 response. Effectively terminal — nothing downstream runs the action again.
+
+**AssetAggregationMiddleware** — post-processes the response to aggregate/rewrite asset references.
+
+**FormPopulationMiddleware** — repopulates submitted form field values into the rendered HTML on validation failure, so the user does not lose their input.
+
+**ExecutionTimeMiddleware** — optional; records total execution time, added last so it measures the whole stack.
+
+## Enabling and disabling middlewares
+
+**Any** middleware in the pipeline — framework or application — can be switched off. Each middleware's `#[Middleware(enabled:)]` sets its default, and an entry in the `config_handlers` middleware map overrides that default. In XML it's a `<middleware_config>` element; in PHP/YAML it's the reserved `__middleware_config` key:
+
+<Tabs syncKey="config-format">
+<TabItem label="PHP">
+
+```php
+// Config/config_handlers.php
+'__middleware_config' => [
+    'Quiote\\Middleware\\TimingMiddleware' => false,
+],
+```
+
+</TabItem>
+<TabItem label="YAML">
+
+```yaml
+# Config/config_handlers.yaml
+__middleware_config:
+  'Quiote\Middleware\TimingMiddleware': false
+```
+
+</TabItem>
+<TabItem label="XML">
+
+```xml
+<!-- Config/config_handlers.xml -->
+<middleware_config>
+  <middleware class="Quiote\Middleware\TimingMiddleware" enabled="false" />
+</middleware_config>
+```
+
+</TabItem>
+</Tabs>
+
+A middleware without an entry uses its attribute's `enabled` default (all framework middleware default to on). A disabled middleware is never constructed. The full mechanism and schema are in the [Middleware reference](/architecture/middleware-reference/#enabling-and-disabling).
+
+## Injecting your own middleware
+
+Applications add their own middleware two ways — the `#[Middleware]` attribute plus `MiddlewareCatalog::registerAttributed()` (joins the framework's ordering pass), or `MiddlewareCatalog::register()` (imperative, spliced in afterwards). Both are covered end to end — including where to register and the ordering caveats — in [Writing custom middleware](/advanced/custom-middleware/).
+
+For the rare case where an app cannot run inside this lifecycle at all, `MiddlewareCatalog::replaceCoreStack()` discards the entire default stack and lets you supply your own — a deliberate footgun, gated behind an exact acknowledgement string. See [Replacing the entire stack](/advanced/custom-middleware/#replacing-the-entire-stack-the-footgun).
+
+## Inspecting the built pipeline
+
+`MiddlewarePipeline::debugStack()` returns the ordered list of labels for the pipeline as actually built, including your registered middlewares. It is the reliable way to confirm ordering in a test rather than reasoning about it.

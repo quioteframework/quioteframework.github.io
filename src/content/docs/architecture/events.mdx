@@ -1,0 +1,88 @@
+---
+title: Events
+description: The PSR-14 event dispatcher, the framework lifecycle events, and writing listeners.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+Middleware covers the *request pipeline*. Events cover everything that isn't pipeline-shaped — *domain and framework* moments you want to react to: the kernel booting, a route matching, an action about to run, a response about to be sent. Quiote ships a PSR-14 dispatcher and a set of lifecycle events, and it's the primary extension point [plugins](/architecture/plugins/) hook into.
+
+Like [logging](/architecture/logging/) and [telemetry](/architecture/telemetry/), the event registry is a process-global, worker-lifetime facade — you register listeners once (at boot, usually from a plugin) and they persist across requests. With no listeners, the whole system is a single array lookup per event: it costs nothing when unused.
+
+## Listening
+
+Register a listener through the `Quiote\Event\Events` facade, keyed by event class, with an optional priority (higher runs first):
+
+```php
+use Quiote\Event\Events;
+use Quiote\Event\Lifecycle\RequestMatchedEvent;
+
+Events::listen(RequestMatchedEvent::class, function (RequestMatchedEvent $e): void {
+    // runs after routing resolves, before the action
+    // $e->request, $e->module, $e->action, $e->routeName, $e->outputType
+}, priority: 0);
+```
+
+A listener registered on a **base class or interface** also sees subclasses — so you can listen broadly (e.g. on the `Event` base) or narrowly (on one concrete event).
+
+Register listeners where the registry is set up once per worker: in a [plugin's](/architecture/plugins/) `register()` (via `$registrar->listen(...)`), or in your front controller before `Kernel::run()`.
+
+## The lifecycle events
+
+All live in `Quiote\Event\Lifecycle`:
+
+| Event | Fires | Payload (readonly) |
+|---|---|---|
+| `KernelBootEvent` | end of `Quiote::bootstrap()` | `environment`, `contexts` |
+| `RequestMatchedEvent` | `RoutingMiddleware`, after a successful match | `request`, `module`, `action`, `routeName`, `outputType` |
+| `ActionBeforeEvent` | before `ActionExecutor::execute()` | `descriptor` — **stoppable** |
+| `ActionAfterEvent` | after the action runs | `descriptor`, execution result |
+| `ResponseSendingEvent` | `Context::handle()`, just before returning | `request`, `response` |
+
+```php
+use Quiote\Event\Events;
+use Quiote\Event\Lifecycle\KernelBootEvent;
+
+Events::listen(KernelBootEvent::class, function (KernelBootEvent $e): void {
+    // one-time per-worker setup — $e->environment, $e->contexts
+});
+```
+
+## Dispatching your own events
+
+Define an event (a plain object) and dispatch it. The dispatcher returns the same event, so listeners can enrich it:
+
+```php
+namespace App\Event;
+
+use Quiote\Event\Event;
+
+final class OrderPlaced extends Event
+{
+    public function __construct(public readonly int $orderId) {}
+}
+```
+
+```php
+use Quiote\Event\Events;
+use App\Event\OrderPlaced;
+
+Events::dispatch(new OrderPlaced($order->id));
+```
+
+### Stoppable events
+
+Extend `Quiote\Event\StoppableEvent` to let a listener halt propagation (subsequent listeners are skipped). `ActionBeforeEvent` is stoppable, for example. Dispatch honours `isPropagationStopped()` per PSR-14.
+
+## `dispatch()` vs `emit()` — who absorbs a bad listener
+
+The facade has two dispatch methods, and the distinction matters:
+
+- **`Events::dispatch($event)`** — PSR-14, **fail-loud**: a listener that throws propagates to the caller. Use this for your own events where you want to know a listener broke.
+- **`Events::emit($event)`** — dispatches only if a listener exists, and **swallows** listener exceptions (logging them instead). The framework uses `emit()` at its lifecycle sites so a buggy listener can never take down a request or the boot — the same "never crash the request" posture as telemetry.
+
+`Events::hasListeners($class)` lets you guard expensive event construction; `Events::dispatcher()` returns the underlying `EventDispatcher` (a PSR-14 `EventDispatcherInterface`); `Events::reset()` clears the registry (for tests).
+
+## What events are *not*
+
+Events are for reacting, not for the request pipeline itself. If you need to intercept, short-circuit, or reorder request handling — auth, CSRF, a health check — that's [middleware](/architecture/middleware-pipeline/), not a listener. Events run at fixed lifecycle points and (via `emit()`) are deliberately unable to break the request.

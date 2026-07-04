@@ -1,0 +1,181 @@
+---
+title: Caching
+description: The action/view output cache, the general-purpose cache, cache backends, and how to make an action cacheable.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+Quiote has two distinct caching layers, and it helps to keep them apart from the start:
+
+1. **The action/view cache** — stores the *rendered result* of an action so a repeat request can skip execution entirely. This is the one you reach for to make a page fast, and it is driven by an `isCacheable()` flag on the action.
+2. **The general-purpose cache** — a PSR-16 key/value store (`CacheManager`) you use directly for anything you want to memoize: a computed value, an API response, a query result.
+
+Both are off by default. Caching is opt-in because the framework will not guess that your output is safe to reuse.
+
+## Turning caching on
+
+The action/view cache is gated by **two** settings — both must be true for it to build at all. This is deliberate (a master switch plus a per-environment switch), and it is an easy thing to get wrong, so check both:
+
+<Tabs syncKey="config-format">
+<TabItem label="PHP">
+
+```php
+// Config/settings.php
+return [
+    'core.cache_enabled' => true,          // master switch (default false)
+    'core.use_cache'     => true,          // required companion flag (default false)
+    'core.cache_backend' => 'filesystem',  // 'filesystem' (default) or 'apcu'
+    'core.cache_dir'     => __DIR__ . '/../cache',
+];
+```
+
+</TabItem>
+<TabItem label="YAML">
+
+```yaml
+# Config/settings.yaml
+core.cache_enabled: true
+core.use_cache: true
+core.cache_backend: filesystem
+core.cache_dir: ./cache
+```
+
+</TabItem>
+<TabItem label="XML">
+
+```xml
+<!-- Config/settings.xml — inside <settings> -->
+<setting name="core.cache_enabled">true</setting>
+<setting name="core.use_cache">true</setting>
+<setting name="core.cache_backend">filesystem</setting>
+<setting name="core.cache_dir">./cache</setting>
+```
+
+</TabItem>
+</Tabs>
+
+| Setting | Default | Effect |
+|---|---|---|
+| `core.cache_enabled` | `false` | Master switch for the action/view cache. |
+| `core.use_cache` | `false` | Companion flag; **both** it and `cache_enabled` must be true. |
+| `core.cache_backend` | `filesystem` | `filesystem` or `apcu`. `apcu` only takes effect if `apcu_enabled()`. |
+| `core.cache_dir` | `<app>/cache` | Base directory; the PSR cache pool lives under `<cache_dir>/psr-cache`. |
+
+There is no `core.cache_ttl` — time-to-live is set per action (below).
+
+## Making an action cacheable
+
+An action opts in by returning `true` from `isCacheable()` and, optionally, a lifetime from `cacheTtlSeconds()`:
+
+```php
+class ShowPostAction extends Action
+{
+    public function isCacheable(?string $outputType = null): bool
+    {
+        return true;
+    }
+
+    public function cacheTtlSeconds(?string $outputType = null): ?int
+    {
+        return $outputType === 'rss' ? 600 : 60;   // null → default 300s
+    }
+
+    public function executeRead(WebRequest $rd)
+    {
+        $this->setAttribute('post', /* ... */);
+        return 'Success';
+    }
+}
+```
+
+Both defaults on the base `Action` are conservative: `isCacheable()` returns `false`, `cacheTtlSeconds()` returns `null` (which falls back to a 300-second default). The output type is passed in, so you can cache HTML but not JSON, or give each a different TTL.
+
+If you just want the common case — cacheable, 300s — apply the trait instead of writing both methods:
+
+```php
+use Quiote\Action\Traits\CacheableActionTrait;
+
+class ShowPostAction extends Action
+{
+    use CacheableActionTrait;   // isCacheable() => true, cacheTtlSeconds() => 300
+}
+```
+
+### How the cache key is built
+
+You do not compose cache keys yourself — there is no `getCacheKey()` hook. `ActionViewCache` builds the key from the module, action, output type, two namespace version counters, and (for secure actions) a user fingerprint:
+
+```
+av:<moduleVersion>:<moduleActionVersion>:<module>:<action>:<outputType>[:u:<fingerprint>]
+```
+
+The user fingerprint is only added when the action's `isSecure()` returns `true`, so a public page shares one cache entry across everyone while a secure page gets a per-authentication-state entry. This is what keeps caching from serving one user's page to another. See [Authentication and authorization](/advanced/authentication-authorization/).
+
+`DispatchMiddleware` runs the whole read-cache / execute-on-miss / store cycle. On a hit it replays the stored view result without re-running the action; on a miss it executes, then stores with your TTL.
+
+### Invalidation
+
+Because you can't vary the key, the way you *expire* a cached action is to bump the namespace it lives in. `CacheManager` exposes targeted invalidation:
+
+```php
+use Quiote\Cache\CacheManager;
+
+CacheManager::invalidateAction('Blog', 'ShowPost');  // expire one action's variants
+CacheManager::invalidateModule('Blog');              // expire the whole module
+```
+
+Call these from the action that *writes* the data — e.g. after saving a post, invalidate the action that displays it — so readers see fresh output before the TTL elapses.
+
+## The general-purpose cache
+
+For everything that isn't action output, use `CacheManager::getCache()`, which returns a PSR-16 cache:
+
+```php
+use Quiote\Cache\CacheManager;
+
+$cache = CacheManager::getCache();
+
+$value = $cache->get('report:daily');
+if ($value === null) {
+    $value = $this->buildExpensiveReport();
+    $cache->set('report:daily', $value, 3600);   // TTL in seconds
+}
+```
+
+The full PSR-16 surface is available (`get`/`set`/`has`/`delete`/`clear`, and the `*Multiple` variants). The backend is the one selected by `core.cache_backend` — Symfony's filesystem adapter by default, APCu when configured and available.
+
+:::note[`FileCache` is not the default backend]
+The framework ships a `Quiote\Cache\FileCache` (a minimal PSR-16 file cache), but the live default is Symfony's `FilesystemAdapter`. `FileCache` is available if you want to inject a specific implementation via `CacheManager::setCache()`, not something you get automatically.
+:::
+
+### Swapping in your own cache
+
+`CacheManager::setCache()` lets you supply any PSR-16 implementation — a Redis client, an in-memory fake for tests, or `FileCache` pointed at a specific directory:
+
+```php
+CacheManager::setCache(new \My\RedisPsr16Cache($redis), 'redis');
+```
+
+## Worker mode and invalidation
+
+Under [worker mode](/architecture/deployment/), `CacheManager` keeps an in-process memo of namespace version numbers. That memo is **not** cleared by the per-request worker reset, so a version bumped by one worker process is not automatically seen by another until its memo refreshes. In practice:
+
+- Single-worker deployments are unaffected.
+- Multi-worker deployments should not rely on `invalidateAction()`/`invalidateModule()` being *instant* across every worker. Lean on TTLs for cross-worker freshness, or call `CacheManager::reset()` where you need a hard refresh (this is also the correct isolation call in tests).
+
+## Declarative per-action caching
+
+Alongside the `isCacheable()` method, a module can declare caching for an action in an XML config file under the module's `Cache/` directory (`Modules/{Module}/Cache/{Action}.xml`). It is handled by the caching config handler and compiles to the same cacheability decision:
+
+```xml
+<!-- Modules/Blog/Cache/ShowPost.xml -->
+<caching lifetime="5 minutes" enabled="true">
+    <group source="locale">locale</group>
+    <view module="Blog">Success</view>
+    <output_type name="html">
+        <template_variable>*</template_variable>
+    </output_type>
+</caching>
+```
+
+This is a declarative alternative to the method-based approach — useful when you want caching described in config rather than code, and it carries over cleanly from Agavi's per-action cache config. For new code the `isCacheable()` / `CacheableActionTrait` path is simpler; use whichever fits your team.

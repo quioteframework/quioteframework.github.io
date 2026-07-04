@@ -1,0 +1,216 @@
+---
+title: Routing
+description: Declaring routes with a Routing subclass and with #[Route] attributes.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+Routing maps a URL to a **module** and an **action**. Quiote builds on the Symfony Routing component, but wraps it so routes carry Quiote's `_module` / `_action` metadata and support reverse generation.
+
+There are two ways to declare routes, and they coexist in the same route collection: a `Routing` subclass (programmatic) and `#[Route]` attributes on action classes.
+
+## A Routing subclass
+
+The supported, general way to declare routes is a subclass of `Quiote\Routing\Routing` that builds a `RouteCollection` in `build()`. You point the `routing` factory role at this class (see [Configuration](/architecture/configuration/)).
+
+```php
+<?php
+namespace App\Routing;
+
+use Quiote\Routing\AttributeRoutes;
+use Quiote\Routing\Routing;
+use Symfony\Component\Routing\Route;
+use Symfony\Component\Routing\RouteCollection;
+
+final class AppRouting extends Routing
+{
+    protected function build(): array
+    {
+        $routes = new RouteCollection();
+        $meta = [];
+
+        $routes->add('index', new Route('/', ['_module' => 'Default', '_action' => 'Index']));
+        $meta['index'] = ['gen_path' => '/', 'path' => '/', 'cut' => false];
+
+        $routes->add('post', new Route('/blog/{slug}', ['_module' => 'Blog', '_action' => 'Post']));
+        $meta['post'] = ['gen_path' => '/blog/{slug}', 'path' => '/blog/{slug}', 'cut' => false];
+
+        // Merge in routes declared via #[Route] attributes:
+        AttributeRoutes::mergeInto($routes, $meta);
+
+        return [$routes, $meta];
+    }
+}
+```
+
+Two things every route needs:
+
+- **A path** — a Symfony route pattern, with `{placeholders}` for dynamic segments.
+- **The `_module` and `_action` defaults** — they tell the dispatcher which action to run. An optional `_output_type` default fixes the output type for the route.
+
+## The `addRoute()` helper
+
+Building `Route` objects and `meta` entries by hand is explicit but verbose. `addRoute()` does both in one call and supports a parent/child hierarchy:
+
+```php
+protected function build(): array
+{
+    $this->addRoute('/', ['name' => 'index', 'module' => 'Default', 'action' => 'Index']);
+    $this->addRoute('/blog/{slug}', ['name' => 'post', 'module' => 'Blog', 'action' => 'Post']);
+
+    return [$this->getRouteCollection(), $this->getMeta()];
+}
+```
+
+The signature is:
+
+```php
+public function addRoute(string $pattern, array $opts = [], ?string $parent = null): string
+```
+
+- **`$pattern`** — the route pattern. If it does not start with `/` and a `$parent` is given, it is appended to the parent's pattern (so children extend their parent's path).
+- **`$opts`** — supports `name` (auto-generated if omitted), `defaults`, and the promoted keys `module`, `action`, `locale`, `output_type`.
+- **`$parent`** — the name of a parent route to nest under.
+
+It returns the final route name.
+
+## Attribute routing
+
+For routes that live naturally next to the action they trigger, declare them with `#[Route]` on the action class. `AttributeRoutes::mergeInto()` (called from your `build()`) scans modules and merges these into the same collection.
+
+```php
+<?php
+namespace App\Modules\Blog\Actions;
+
+use Quiote\Action\Action;
+use Quiote\Request\WebRequest;
+use Quiote\Routing\Attribute\Route;
+
+#[Route('/blog/{slug}', name: 'post', methods: ['GET'])]
+class PostAction extends Action
+{
+    public function executeRead(WebRequest $rd)
+    {
+        return 'Success';
+    }
+}
+```
+
+Note the attribute goes on the **class**, not a method. This is deliberate: a Quiote action is one class exposing several HTTP-verb methods (`executeRead`, `executeWrite`), the opposite of Symfony's one-controller-method-per-route model. A class can carry more than one `#[Route]` (the attribute is repeatable).
+
+`module` and `action` are **not** attribute fields — they are derived from the action's location in the module tree, the same mapping `Controller::createActionInstance()` uses, in reverse.
+
+The `#[Route]` parameters:
+
+| Parameter | Meaning |
+|---|---|
+| `path` | Symfony route path, e.g. `/products/{id}` |
+| `name` | Route name; derived from module+action if omitted |
+| `methods` | HTTP methods accepted; empty means all |
+| `requirements` | Per-parameter regex requirements |
+| `defaults` | Extra route defaults, merged under module/action |
+| `host` | Route host pattern |
+| `condition` | Symfony ExpressionLanguage condition |
+| `priority` | Higher matches first |
+| `outputType` | Output type this route resolves to |
+
+## Which style to use
+
+They are not mutually exclusive — pick per route:
+
+- Use a **`Routing` subclass** for the app's route map, especially routes with hierarchy, shared prefixes, or generated patterns.
+- Use **`#[Route]` attributes** for routes you want to read right next to the action, and for module-local routes that ship with a reusable module.
+
+## Route parameters in an action
+
+Path placeholders arrive as request parameters. Read them the same way you read validated input — through `WebRequest::getParameter()`:
+
+```php
+public function executeRead(WebRequest $rd)
+{
+    $slug = $rd->getParameter('slug');
+    // ...
+    return 'Success';
+}
+```
+
+Because parameter access is whitelist-enforced under strict validation, a route parameter you read should be covered by a validator or accessed with a default. See [Validation](/basics/validation/).
+
+## Customising the HTTP verb mapping
+
+Which HTTP verb runs which action method is decided by `Quiote\Execution\HttpMethodMapper`. The defaults are:
+
+| Verb | Token | Method |
+|---|---|---|
+| `GET`, `HEAD`, `OPTIONS`, `TRACE` | `read` | `executeRead` |
+| `POST` | `write` | `executeWrite` |
+| `PUT`, `PATCH` | `update` | `executeUpdate` |
+| `DELETE` | `remove` | `executeRemove` |
+
+You can override or extend this map with the `routing.http_method_map` setting. Your entries are **merged onto** the defaults — you only list what you want to change:
+
+<Tabs syncKey="config-format">
+<TabItem label="PHP">
+
+```php
+// Config/settings.php
+return [
+    // ...
+    'routing.http_method_map' => [
+        'PATCH' => 'write',   // route PATCH to executeWrite instead of executeUpdate
+        'LOCK'  => 'lock',    // add a non-standard verb → executeLock()
+    ],
+];
+```
+
+</TabItem>
+<TabItem label="YAML">
+
+```yaml
+# Config/settings.yaml
+routing.http_method_map:
+  PATCH: write    # route PATCH to executeWrite instead of executeUpdate
+  LOCK: lock      # add a non-standard verb → executeLock()
+```
+
+</TabItem>
+<TabItem label="XML">
+
+```xml
+<!-- Config/settings.xml — note prefix="routing." on the wrapper -->
+<settings prefix="routing.">
+  <setting name="http_method_map">
+    <ae:parameter name="PATCH">write</ae:parameter>
+    <ae:parameter name="LOCK">lock</ae:parameter>
+  </setting>
+</settings>
+```
+
+</TabItem>
+</Tabs>
+
+Or set it programmatically before the map is first read:
+
+```php
+use Quiote\Config\Config;
+
+Config::set('routing.http_method_map', ['LOCK' => 'lock']);
+```
+
+Rules:
+
+- **Keys** (verbs) are matched case-insensitively; **values** (tokens) are lowercased.
+- The token becomes the method name, `ucfirst`-ed: token `lock` → `executeLock()`. Any action meant to handle that verb needs the matching method.
+- The token also names the per-method validation hooks — token `lock` → `registerLockValidators()`, `validateLock()`, `handleLockError()` (see [Validation](/basics/validation/)).
+- An unmapped verb falls back to the `read` token.
+
+Note the XML tab: a `routing.*` key needs the `prefix` attribute on the enclosing `<settings>` element, because a bare `<setting>` compiles to a `core.` key — see [The XML `prefix` attribute](/architecture/configuration/#the-xml-prefix-attribute). The [Actions and views](/architecture/actions-and-views/) page describes how the resolved method is called.
+
+## Generating URLs
+
+The routing object generates URLs in reverse from a route name and parameters via `gen()`:
+
+```php
+$url = $this->getContext()->getRouting()->gen('post', ['slug' => 'hello-world']);
+// → /blog/hello-world
+```

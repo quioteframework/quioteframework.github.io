@@ -1,0 +1,172 @@
+---
+title: Telemetry
+description: OpenTelemetry tracing and metrics — enabling it, the telemetry.* settings, sampling, spans, and log correlation.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+Quiote ships OpenTelemetry-based **distributed tracing and metrics**. When enabled it opens a span tree for each request (request → route → action → view, and optionally per middleware), records resource metrics (wall time, CPU, memory), propagates W3C trace context, and correlates every log line with its trace.
+
+It is **off by default** and built to be invisible when off: instrumentation call sites resolve to shared no-op handles, so they cost nothing and need no changes when you turn telemetry on.
+
+:::note[Optional dependency]
+The `open-telemetry/*` packages are not bundled. They're declared under `require-dev` and `suggest`; a production `composer install` without `--dev` pulls none of them. Every OTel call site is guarded, so their absence is a supported state. To use telemetry in production, `composer require` the OpenTelemetry SDK (and, for the OTLP exporter, a PSR-18 HTTP client).
+:::
+
+## Enabling it
+
+Set `telemetry.enabled` and pick an exporter:
+
+<Tabs syncKey="config-format">
+<TabItem label="PHP">
+
+```php
+// Config/settings.php
+'telemetry.enabled'  => true,
+'telemetry.exporter' => 'otlp',
+'telemetry.otlp.endpoint' => 'http://localhost:4318',
+```
+
+</TabItem>
+<TabItem label="YAML">
+
+```yaml
+# Config/settings.yaml
+telemetry.enabled: true
+telemetry.exporter: otlp
+telemetry.otlp.endpoint: 'http://localhost:4318'
+```
+
+</TabItem>
+<TabItem label="XML">
+
+```xml
+<!-- Config/settings.xml -->
+<settings prefix="telemetry.">
+  <setting name="enabled">true</setting>
+  <setting name="exporter">otlp</setting>
+  <setting name="otlp.endpoint">http://localhost:4318</setting>
+</settings>
+```
+
+</TabItem>
+</Tabs>
+
+`telemetry.*` is not a `core.*` key, so in XML it needs a `<settings prefix="telemetry.">` wrapper (see [Configuration → The XML `prefix` attribute](/architecture/configuration/#the-xml-prefix-attribute)).
+
+Turning `telemetry.enabled` on is necessary but not sufficient: the SDK must also be installed. `TelemetryBootstrap` (run once per worker from the kernel) fails safe — if telemetry is disabled, the SDK is missing, or exporter config is bad, it stays off rather than throwing.
+
+## How it works
+
+- **`TelemetryBootstrap`** builds the tracer/meter providers once per worker from `telemetry.*`, holds them for the worker's lifetime, flushes after each request, and shuts down cleanly (even in single-shot mode, via a shutdown function).
+- **`Quiote\Telemetry\Trace`** is the static facade (mirroring [`Log`](/architecture/logging/)): `Trace::span()`, `Trace::current()`, `Trace::metrics()`, `Trace::enabled()`. When telemetry is off it returns no-op handles.
+- **`TelemetryMiddleware`** sits in the pipeline at phase `bootstrap`, priority 950 — just inside `ErrorHandlingMiddleware` (see [The middleware pipeline](/architecture/middleware-pipeline/)). It opens the root request span and records the resource metrics. A single `if (!Trace::enabled())` pass-through when off makes it safe to leave in the stack always.
+
+## The `telemetry.*` settings
+
+| Key | Default | Effect |
+|---|---|---|
+| `telemetry.enabled` | `false` | Master gate. |
+| `telemetry.exporter` | `'otlp'` | `none` (in-memory, for tests/local inspection), `console` (human-readable stdout, no extra client), or `otlp` (needs a PSR-18 client). An unrecognized value falls back to `none` with a logged warning. |
+| `telemetry.export.mode` | `batch` under worker mode, else `simple` | `simple` exports synchronously on span end; `batch` batches. |
+| `telemetry.service.name` | `core.app_name`, else `'quiote-app'` | `service.name` resource attribute. |
+| `telemetry.service.namespace` | unset | `service.namespace` resource attribute. |
+| `telemetry.resource` | `[]` | Extra resource attributes, merged as-is. |
+| `telemetry.otlp.endpoint` | `'http://localhost:4318'` | OTLP endpoint (only when `exporter = otlp`). |
+| `telemetry.otlp.protocol` | `'http/protobuf'` | OTLP protocol. |
+| `telemetry.otlp.headers` | `[]` | OTLP headers (comma-joined `key=value`). |
+| `telemetry.sampling.strategy` | `'parentbased_traceidratio'` | `always_on`, `always_off`, or `parentbased_traceidratio`. Unrecognized → falls back to `parentbased_traceidratio` with a warning. |
+| `telemetry.sampling.ratio` | `0.1` | Fraction of locally-initiated root traces recorded under the ratio strategy. |
+| `telemetry.sampling.force_header` | `'X-Quiote-Trace'` | Request header that force-samples one request; `''` disables the header path. |
+| `telemetry.spans.route` | `true` | Route-match span **and** the root-span rename. |
+| `telemetry.spans.action` | `true` | Action span **and** its nested view-render span. |
+| `telemetry.spans.middleware` | `false` | Wrap every pipeline middleware in a span. High overhead — opt-in. |
+
+:::caution[Sampling default]
+With the default `parentbased_traceidratio` strategy and `telemetry.sampling.ratio = 0.1`, enabling telemetry records only ~10% of traces. Set `telemetry.sampling.strategy => 'always_on'` (or raise the ratio) to capture everything in development.
+:::
+
+## Exporters
+
+- **`none`** — an in-memory exporter; nothing leaves the process. Useful for tests and local inspection.
+- **`console`** — writes spans/metrics to stdout in human-readable form. No extra client needed.
+- **`otlp`** — sends to an OTLP endpoint (an OpenTelemetry Collector, or a backend that speaks OTLP). Requires a PSR-18 HTTP client to be installed. The `telemetry.otlp.*` settings are bridged to the standard `OTEL_EXPORTER_OTLP_*` environment variables.
+
+## Sampling
+
+Sampling decides which traces are recorded. `telemetry.sampling.strategy` selects the sampler; under `parentbased_traceidratio`, `telemetry.sampling.ratio` is the fraction of *locally-initiated root* traces kept — a sampled or unsampled parent's decision is always inherited, so a whole request is captured or dropped as a unit.
+
+**Force-sampling** overrides the ratio for one request. `TelemetryMiddleware` sets a `quiote.force_sample` marker when either:
+
+- the request carries the configured header (`telemetry.sampling.force_header`, default `X-Quiote-Trace`) with a truthy value (`1`/`true`/`yes`), or
+- an app or earlier middleware set the `quiote.force_sample` PSR-7 request attribute (checked first, independent of the header setting).
+
+`ForceSampleSampler` then records that span unconditionally; because it's the root, everything nested under it in the same request is captured too. (The marker must be set at span-creation time — a later `setAttribute()` is invisible to the sampler, an OTel contract.)
+
+## Category filtering
+
+A second, orthogonal filter: a per-category on/off switch to silence a noisy subtree regardless of the sampling decision. Every span has a dot-namespaced category (mirroring [log categories](/architecture/logging/)) — `Quiote.Routing`, `Quiote.Action`, `Quiote.View`, `Quiote.Middleware`.
+
+Like logging, this is **configured in code** (in `index.php`, alongside `Log::setLevels()`), not in `settings` — the category map isn't a flat settings value, and code-config avoids a bootstrap-ordering pitfall:
+
+```php
+use Quiote\Telemetry\Trace;
+
+Trace::setDefaultCategoryEnabled(true);
+Trace::setCategories([
+    'Quiote.Validation' => false,   // kill switch: silences every span under it
+    'Quiote.Routing'    => true,
+]);
+```
+
+The semantics differ from logging on purpose: a **disabled ancestor wins unconditionally** — no explicit `true` on a descendant can re-enable it. That makes `'Quiote.Validation' => false` a real kill switch for the whole subtree. Only when nothing on the chain is disabled does longest-prefix matching among `true` entries apply (as in logging). A filtered-out span returns the same no-op handle as when telemetry is off, so nested enabled spans still parent onto the nearest recorded ancestor. Category filtering applies to spans only — metrics are never affected.
+
+## Spans
+
+**Root request span** (`TelemetryMiddleware`) — opened as `"{METHOD} {PATH}"`, kind `Server`, and renamed by `RoutingMiddleware` to the low-cardinality route identity (`"GET /orders/{id}"`) once a route matches. Attributes include `http.request.method`, `url.path`, `quiote.duration_ms`, `quiote.cpu.user_ms` / `system_ms` (omitted where `getrusage()` is unavailable), `quiote.memory.peak_bytes` / `delta_bytes`, `quiote.cache.hit`, `http.response.status_code` (span status `Error` on ≥ 500), and `http.response.body.size`.
+
+**Route-match span** (`Quiote.Routing`, name `match`) — gated by `telemetry.spans.route`, which also gates the root-span rename. Adds `http.route` and `route_name` on a match, or `route.matched = false` + `route.outcome` on a miss.
+
+**Action span** (`Quiote.Action`, name `{module}:{action}`) and its nested **view-render span** (`Quiote.View`, name `{viewModule}:{viewName}`) — both gated by `telemetry.spans.action` (there is no separate view setting). The view span is skipped entirely when there's no view (`View::NONE`).
+
+**Per-middleware spans** (`Quiote.Middleware`, named by FQCN) — gated by `telemetry.spans.middleware` (default off, opt-in; high cardinality). When off, the decorator is never even constructed.
+
+:::note
+With per-middleware spans on, `ErrorHandlingMiddleware` (the outermost middleware) becomes the trace root, so the semantic `"{METHOD} {route}"` HTTP span becomes its child. Harmless, but the root you see is a framework-internal label rather than the request identity.
+:::
+
+## Metrics
+
+Recorded every request (never sampled): `http.server.request.duration` (seconds), `quiote.request.cpu.time` (seconds, by `cpu.mode`), `quiote.request.memory.peak` (bytes), `quiote.worker.memory.rss` (bytes), and `http.server.request.count`. All are dimensioned by `http.response.status_code` and `cache.hit`.
+
+## Context propagation and log correlation
+
+**Inbound:** `TelemetryMiddleware` extracts a W3C `traceparent` / `tracestate` header and activates it before opening the root span, so the root span parents onto the upstream span automatically. A missing or malformed header degrades safely to a fresh trace; a parent explicitly marked "not sampled" is respected.
+
+**Outbound:** requests made through Quiote's [HTTP client](/basics/http-client/) inject the `traceparent` header and open a `SpanKind::Client` span automatically, so a downstream service continues the same trace. This covers calls made through the framework client; a raw `curl`/socket call bypasses it.
+
+**Log correlation:** immediately after opening the root span, the middleware enriches `LogContext` with `trace_id` and `span_id`, so every log line for the rest of the request is cross-navigable with the trace — even for a sampled-out span (the IDs exist regardless of the export decision). This complements the `rid` correlation id already added in `Context::handle()`.
+
+## Instrumenting your own code
+
+Because acquisition is always safe, you can add spans and metrics anywhere without guarding on whether telemetry is on:
+
+```php
+use Quiote\Telemetry\Trace;
+
+$span = Trace::span('App.Orders', 'reserve-stock', ['order.id' => $order->id]);
+try {
+    // ... work ...
+} finally {
+    $span->end();
+}
+
+Trace::metrics()->recordCounter('app.orders.reserved', 1);
+```
+
+When telemetry is off (or the category is filtered), these resolve to no-op handles and cost nothing.
+
+## Not implemented
+
+- **Database spans** — `Database::getConnection()` returns the raw driver, with no central query method to instrument. (Outbound HTTP calls *are* traced when made through the [HTTP client](/basics/http-client/).)
+- **Slot / sub-action spans** — `SlotDispatcher` has no clean seam to attach a span to safely.

@@ -1,0 +1,32 @@
+---
+title: Quiote
+description: A powerful, scalable PHP 8.5+ MVC framework.
+template: splash
+hero:
+  tagline: A powerful, scalable PHP 8.5+ MVC framework for serious, long-lived applications.
+  actions:
+    - text: Get Started
+      link: /getting-started/introduction/
+      icon: right-arrow
+    - text: View on GitHub
+      link: https://github.com/quioteframework/quiote
+      icon: external
+      variant: minimal
+---
+
+import { CardGrid, Card } from '@astrojs/starlight/components';
+
+<CardGrid stagger>
+  <Card title="PSR-15 middleware pipeline" icon="seti:pipeline">
+    A clean, composable request pipeline — routing, security, validation, CSRF, and dispatch each live in their own middleware.
+  </Card>
+  <Card title="Fine-grained control" icon="setting">
+    Quiote puts choice and freedom over limiting conventions. Most implementation decisions stay yours.
+  </Card>
+  <Card title="Modern PHP 8.5+" icon="seti:php">
+    Typed properties, enums, readonly, attributes, and first-class callable syntax throughout.
+  </Card>
+  <Card title="Flexible configuration" icon="document">
+    PHP arrays, YAML, or XML — mixed and matched per file, with full inheritance across formats.
+  </Card>
+</CardGrid>

@@ -1,0 +1,257 @@
+---
+title: Logging
+description: Quiote's PSR-3 logging — category levels, sinks, structured events, and scopes.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+Quiote's logging is a PSR-3 stack with **per-category minimum levels**, structured message templates, ambient scopes, and pluggable sinks. It replaces Agavi's bitmask logger and the old `QUIOTE_DEBUG_*` environment flags: instead of turning debug on everywhere and drowning in output, you raise a single category to `Debug` and leave the rest quiet.
+
+One thing makes logging different from every other subsystem: **it is configured in code, before the kernel runs.** It has to be, because the framework logs its own bootstrap — including config reading — so logging cannot depend on the config system.
+
+## Configure before the kernel
+
+Set levels and sinks in your front controller (`pub/index.php`) **before** `Kernel::run()`. Under a persistent worker this runs once at startup; the configuration is process-global and immutable for the worker's life.
+
+```php
+use Quiote\Logging\{Log, Level};
+use Quiote\Logging\Sink\{JsonStdoutSink, AnsiTextStreamSink};
+
+// --- Logging (PSR-3) -------------------------------------------------------
+// Configured here, before the kernel runs (worker startup, once). Per-category
+// minimum levels replace the old debug env flags: raise a single category to
+// Debug to get verbose logs for just that subsystem instead of turning debug
+// on everywhere.
+Log::setDefaultLevel(Level::Info);
+Log::setLevels([
+    'App'              => Level::Info,     // your application code
+    'Quiote'           => Level::Warning,  // quiet framework internals by default…
+    'Quiote.Routing'   => Level::Debug,    // …except the subsystems you're debugging
+    'Quiote.Validator' => Level::Debug,
+    // Debug a single class on demand (longest-prefix wins), e.g.:
+    // 'App.Session.StorageAdapter' => Level::Debug,
+]);
+
+// Sinks accept down to Debug; the per-category thresholds above do the gating.
+Log::addSink(new JsonStdoutSink(Level::Debug));                 // one JSON object per line → stdout
+Log::addSink(new AnsiTextStreamSink(minLevel: Level::Debug));   // one coloured line per message
+
+Quiote\Runtime\Kernel::create([
+    'app_dir' => dirname(__DIR__),
+    'env'     => getenv('QUIOTE_ENV') ?: 'production',
+    'context' => 'web',
+])->run();
+```
+
+Because the sink is registered before bootstrap, framework startup lines are captured too. If you configure nothing, logging is effectively off — there are no sinks to emit to.
+
+## Levels
+
+Levels are an ordinal enum with minimum-level (`>=`) semantics, aligned to PSR-3 / RFC 5424 with an extra `Trace` below `Debug`:
+
+| Level | Value | PSR-3 |
+|---|---|---|
+| `Trace` | 50 | `debug` |
+| `Debug` | 100 | `debug` |
+| `Info` | 200 | `info` |
+| `Notice` | 250 | `notice` |
+| `Warning` | 300 | `warning` |
+| `Error` | 400 | `error` |
+| `Critical` | 500 | `critical` |
+| `Alert` | 550 | `alert` |
+| `Emergency` | 600 | `emergency` |
+
+An event is emitted when its level is at or above the threshold for its category. `Level::fromName('warn')` parses a case-insensitive name (with aliases like `warn`, `err`, `fatal`) for config from environment variables.
+
+## Categories and per-category levels
+
+Every log event carries a **category** — a dotted string. Framework subsystems use curated names (`Quiote.Routing`, `Quiote.Validator`); application code uses the class name, dot-normalized.
+
+You acquire a logger two ways:
+
+```php
+use Quiote\Logging\Log;
+
+$log = Log::for($this);                  // category = FQCN, e.g. "App\Orders\OrderService" → "App.Orders.OrderService"
+$log = Log::create('Quiote.Routing');    // an explicit category
+```
+
+`setLevels()` maps category **prefixes** to minimum levels. Resolution is **longest matching prefix wins**, matched on a dot boundary, falling back to the default:
+
+```
+default            = Info
+Quiote             = Warning     # everything under Quiote.* is quiet…
+Quiote.Routing     = Debug       # …except routing, which is verbose right now
+App.Orders         = Debug       # verbose only for the code under investigation
+```
+
+Matching is on dot boundaries, so a prefix must line up with a full dotted segment: the prefix `Quiote` matches the category `Quiote.Routing` but not a category `QuioteFoo`. With the config above, an event under `Quiote.Routing` matches that exact key and gets `Debug`; any other category under `Quiote.*` matches only the shorter `Quiote` prefix and gets `Warning`.
+
+This is why framework subsystems log under curated category names (`Quiote.Routing`, `Quiote.Validator`) rather than their raw class names — the curated names are stable config keys you can target. Scope `Debug` to exactly the subsystem you care about, and nothing else changes.
+
+## Two-stage gating
+
+An event is emitted only if it passes **both** thresholds:
+
+1. **The category threshold** — from `setLevels()` / `setDefaultLevel()`.
+2. **The sink threshold** — each sink has its own minimum level.
+
+The recommended pattern (shown above) is to make sinks permissive (`Level::Debug`) and let the per-category thresholds do the gating. That way a single line in `setLevels()` controls verbosity, rather than having to keep sink levels and category levels in sync. Sinks can also carry per-category overrides if you need one destination to be stricter than another.
+
+## Sinks
+
+A sink is a destination. All shipped sinks extend `AbstractStreamSink` and take a minimum level (and optional per-category overrides) as constructor arguments:
+
+| Sink | Destination | Constructor |
+|---|---|---|
+| `JsonStdoutSink` | `php://stdout`, one compact JSON object per line | `new JsonStdoutSink(Level $minLevel = Level::Debug)` |
+| `TextStreamSink` | Any `php://` stream (default `php://stderr`) | `new TextStreamSink(string $stream, Level $minLevel = Level::Debug)` |
+| `AnsiTextStreamSink` | Coloured text to a stream (default `php://stderr`) | `new AnsiTextStreamSink(string $stream = 'php://stderr', Level $minLevel = Level::Debug)` |
+| `EmojiTextStreamSink` | Coloured text with emoji level markers | same as `AnsiTextStreamSink` |
+| `FileSink` | A file (creates the directory if missing) | `new FileSink(string $path, Level $minLevel = Level::Debug)` |
+
+`JsonStdoutSink` is the default for containers (FrankenPHP/Caddy/Kubernetes). It emits one physical line per event — never pretty-printed, so an embedded stack trace stays a single log record. Each record carries reserved keys `ts`, `level`, `category`, `message`, and `src: "app"` (a discriminator so log queries can separate your app's events from the web server's), plus the original `template` when the message had placeholders, plus any scope and context properties flattened in.
+
+You can register several sinks at once — for example JSON to stdout for aggregation and coloured text to stderr for local dev:
+
+```php
+Log::addSink(new JsonStdoutSink(Level::Info));
+Log::addSink(new AnsiTextStreamSink('php://stderr', Level::Debug));
+Log::addSink(new FileSink('/var/log/app/warnings.log', Level::Warning));
+```
+
+## Writing log messages
+
+A `CategoryLogger` implements the full PSR-3 `LoggerInterface`, so all eight level methods plus `log()` are available. Use **message templates** with `{placeholder}` tokens and pass the values in the context array — the template and its properties both survive to structured sinks (the JSON sink keeps them as fields; text sinks interpolate them):
+
+```php
+$log = Log::for($this);
+
+$log->info('Order {orderId} shipped to {country}', [
+    'orderId' => $order->id,
+    'country' => $order->country,
+]);
+
+$log->warning('Retry {attempt}/{max} for {url}', [
+    'attempt' => $n, 'max' => 3, 'url' => $url,
+]);
+```
+
+An exception passed under the `exception` key is pulled out and attached to the event as a `Throwable`, not flattened into the properties:
+
+```php
+try {
+    // ...
+} catch (\Throwable $e) {
+    $log->error('Payment capture failed for order {orderId}', [
+        'orderId'   => $order->id,
+        'exception' => $e,
+    ]);
+}
+```
+
+### Guard expensive log calls
+
+Building a log message can cost more than the log is worth when the level is disabled. `isEnabled()` is an allocation-free guard — one enum comparison against the cached threshold — for the hot path:
+
+```php
+if ($log->isEnabled(Level::Debug)) {
+    $log->debug('Parsed body {size} bytes: {json}', [
+        'size' => strlen($raw),
+        'json' => $this->prettyPrint($raw),   // expensive; skipped when Debug is off
+    ]);
+}
+```
+
+The logger short-circuits internally too — if no sink will accept the event, it never builds the event, merges scope, or interpolates. The guard is for when *constructing the arguments* is itself expensive.
+
+## Scopes and enrichers
+
+Ambient context lets you stamp properties onto every event emitted while a scope is active — a correlation id, a user id — without threading them through every call. This is `Quiote\Logging\LogContext` (Serilog's `LogContext` / .NET's `BeginScope`):
+
+```php
+use Quiote\Logging\LogContext;
+
+// Block-scoped: hold the token; the frame pops when it goes out of scope.
+$token = LogContext::push(['orderId' => $order->id]);
+$this->process($order);            // every log line in here carries orderId
+unset($token);                     // or just let $token fall out of scope
+
+// Request-lifetime: no token to hold; removed only by clear().
+LogContext::enrich(['userId' => $user->id]);
+```
+
+Two styles, and the difference matters:
+
+- **`push()`** returns a `ScopeToken`. **You must hold it** — an unheld `push([...])` pops immediately, because the token is a temporary destroyed at the end of the statement. Use it for block-scoped context.
+- **`enrich()`** pushes a frame with no token; it lasts until `clear()`. Use it for request-lifetime enrichers where there is no natural block.
+
+Quiote already enriches every request with a correlation id: the `quiote.rid` id minted in `Context::handle()` is pushed as a scope property, so every line for a request is correlatable.
+
+### Correlation IDs
+
+Rather than always minting a fresh id, `Context::handle()` adopts an **inbound** correlation-id header when the request carries one — so a gateway or upstream service can tie its request to your logs. The inbound value is sanitized (control bytes stripped, length-capped) because it becomes a log field and a response header. When no header is present, an id is generated as before. The id is echoed back on the response under the same header name.
+
+| Setting | Default | Effect |
+|---|---|---|
+| `core.correlation_id.header` | `'X-Correlation-Id'` | Header read on the way in and echoed on the way out. |
+| `core.correlation_id.expose` | `true` | Whether to echo the id back on the response. |
+
+<Tabs syncKey="config-format">
+<TabItem label="PHP">
+
+```php
+// Config/settings.php
+'core.correlation_id.header' => 'X-Correlation-Id',
+'core.correlation_id.expose' => true,
+```
+
+</TabItem>
+<TabItem label="YAML">
+
+```yaml
+# Config/settings.yaml
+core.correlation_id.header: X-Correlation-Id
+core.correlation_id.expose: true
+```
+
+</TabItem>
+<TabItem label="XML">
+
+```xml
+<!-- Config/settings.xml -->
+<settings>
+  <setting name="correlation_id.header">X-Correlation-Id</setting>
+  <setting name="correlation_id.expose">true</setting>
+</settings>
+```
+
+</TabItem>
+</Tabs>
+
+The adopted (or generated) value flows through the `quiote.rid` request attribute and the `LogContext` enrichment unchanged — and, when [telemetry](/architecture/telemetry/) is on, sits alongside `trace_id`/`span_id` for full cross-navigation.
+
+:::caution[Worker-mode safety]
+The scope stack is process-global. Under a persistent worker, a scope left on the stack would leak one request's properties into the next request's logs. The framework clears it for you (`LogContext::clear()` runs in `Context::reset()` at each request boundary) — but if you add your own long-lived enrichers, rely on that per-request clear rather than assuming a fresh stack.
+:::
+
+## Per-environment configuration
+
+Logging is configured **only in code** — there is no `logging.xml` or config-file binding, by design (the requirement that logging work before the config system rules it out). To vary levels per environment, drive the programmatic calls from environment variables in `index.php`:
+
+```php
+Log::setDefaultLevel(Level::fromName(getenv('LOG_LEVEL') ?: 'info'));
+
+foreach (['App.Orders', 'Quiote.Routing'] as $cat) {
+    $env = 'LOG_LEVEL__' . str_replace('.', '_', $cat);
+    if ($v = getenv($env)) {
+        Log::setLevel($cat, Level::fromName($v));
+    }
+}
+```
+
+That keeps a per-category level change a config-line (or an env-var) change, not a redeploy — which is the entire point of per-category levels.
+
+## Injecting a logger
+
+`Log::for($this)` is the acquisition API everywhere today. A `LoggerFactoryInterface` and a PSR-3 `LoggerInterface` are available for constructor injection through the [DI container](/architecture/container/), and both delegate to the same static registry — so injected loggers and `Log::for()` share one configuration. Prefer `Log::for($this)` unless you specifically want the logger injected.

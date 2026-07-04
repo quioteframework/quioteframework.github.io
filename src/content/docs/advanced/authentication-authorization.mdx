@@ -1,0 +1,239 @@
+---
+title: Authentication and authorization
+description: The user/security model — securing actions, credentials, RBAC, CSRF, and rate limiting.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+Quiote's security model has three moving parts: a **user** object that holds authentication state and credentials, **actions** that declare whether they are secure and what they require, and `SecurityMiddleware`, which decides — before the action runs — whether to allow it or forward the request elsewhere.
+
+As with the rest of the framework, authentication itself is unopinionated: Quiote gives you the mechanism (is-authenticated, has-credentials, forward-on-denial) and leaves *how a user proves who they are* to you.
+
+## The user hierarchy
+
+Three classes, each adding capability, in `Quiote\User`:
+
+| Class | Adds |
+|---|---|
+| `User` | Base user, attribute storage |
+| `SecurityUser` | Authentication state + credentials |
+| `RbacSecurityUser` | Role-based access control on top of credentials |
+
+You choose which one your app uses by pointing the `user` factory role at it (see [Configuration](/architecture/configuration/)):
+
+<Tabs syncKey="config-format">
+<TabItem label="PHP">
+
+```php
+// Config/factories.php — the "user" role
+'user' => ['class' => \App\Security\AppUser::class, 'params' => []],   // extends Quiote\User\RbacSecurityUser
+```
+
+</TabItem>
+<TabItem label="YAML">
+
+```yaml
+# Config/factories.yaml
+user:
+  class: App\Security\AppUser        # extends Quiote\User\RbacSecurityUser
+  params: []
+```
+
+</TabItem>
+<TabItem label="XML">
+
+```xml
+<!-- Config/factories.xml — inside <ae:configuration> -->
+<user class="App\Security\AppUser" />   <!-- extends Quiote\User\RbacSecurityUser -->
+```
+
+</TabItem>
+</Tabs>
+
+### SecurityUser
+
+`SecurityUser` implements `ISecurityUser`:
+
+```php
+interface ISecurityUser
+{
+    public function addCredential($credential);
+    public function clearCredentials();
+    public function hasCredentials($credential);
+    public function isAuthenticated();
+    public function removeCredential($credential);
+    public function setAuthenticated($authenticated);
+}
+```
+
+Authentication state and credentials persist in session storage. Two security-relevant behaviours are built in:
+
+- **`setAuthenticated(true)` regenerates the session id** on the unauthenticated → authenticated transition, defeating session fixation.
+- **`isAuthenticated()` reads the value loaded once at init** and does not re-read storage mid-request, avoiding a class of fail-open bugs.
+
+### Credentials: AND / OR
+
+`hasCredentials()` encodes boolean structure in the argument shape:
+
+- A plain array of credentials means **all** are required (AND).
+- A nested array means **one or more** of that group is required (OR).
+
+```php
+// requires 'edit' AND ('admin' OR 'moderator')
+$user->hasCredentials(['edit', ['admin', 'moderator']]);
+```
+
+### RbacSecurityUser
+
+`RbacSecurityUser` adds roles on top of credentials. Granting a role walks its role → parent chain and adds each permission as a credential:
+
+```php
+$user->grantRole('editor');   // adds every permission the editor role (and its parents) grant
+$user->hasRole('editor');
+$user->revokeRole('editor');
+```
+
+Roles and their permissions are defined in the `rbac_definitions` config. So in an RBAC app you think in **roles** when granting, and the framework checks **credentials** (the permissions those roles imply) when authorizing.
+
+### Defining roles and permissions
+
+Roles and permissions live in `Config/rbac_definitions.xml`. Role hierarchy is expressed by **nesting** — a role declared inside another role's `<roles>` is a child, and a granted role receives its own permissions plus every ancestor's:
+
+```xml
+<ae:configurations
+    xmlns:ae="http://quiote.dev/quiote/config/global/envelope/1.1"
+    xmlns="http://quiote.dev/quiote/config/parts/rbac_definitions/1.1">
+  <ae:configuration>
+    <roles>
+      <role name="guest">
+        <permissions>
+          <permission>photos.list</permission>
+        </permissions>
+        <roles>
+          <role name="member">
+            <permissions>
+              <permission>photos.rate</permission>
+            </permissions>
+            <roles>
+              <role name="photomoderator">
+                <permissions>
+                  <permission>photos.edit</permission>
+                  <permission>photos.delete</permission>
+                </permissions>
+              </role>
+            </roles>
+          </role>
+        </roles>
+      </role>
+    </roles>
+  </ae:configuration>
+</ae:configurations>
+```
+
+Here `photomoderator` inherits `member`'s `photos.rate` and `guest`'s `photos.list` on top of its own permissions. Granting `photomoderator` therefore adds all of them as credentials, so an action requiring `photos.delete` is allowed. A `member` — lacking `photos.delete` — is forwarded to the `secure` action; an unauthenticated user is forwarded to `login`.
+
+`rbac_definitions.xml` is compiled and cached like the rest of Quiote's config; it is read once when the `RbacSecurityUser` initializes (from `core.config_dir`, overridable with the user's `definitions_file` parameter).
+
+## Authenticating a user
+
+Authentication is your code — verify a password, validate a token, complete an OAuth flow — and then tell the user object the result. A login action, in outline:
+
+```php
+public function executeWrite(WebRequest $rd)
+{
+    $user = $this->getContext()->getUser();
+
+    if ($this->credentialsAreValid($rd)) {
+        $user->setAuthenticated(true);      // regenerates the session id
+        $user->grantRole('member');         // if using RBAC
+        return 'Success';
+    }
+
+    $this->setAttribute('error', 'Invalid credentials.');
+    return 'Input';
+}
+```
+
+Quiote does not ship a password-checking or token-parsing implementation — `credentialsAreValid()` is yours. What it provides is the state model (`setAuthenticated`, `grantRole`) and the enforcement below.
+
+## Securing an action
+
+An action declares its own security via two hooks:
+
+```php
+class EditPostAction extends Action
+{
+    public function isSecure(): bool
+    {
+        return true;                        // this action requires authorization
+    }
+
+    public function getCredentials()
+    {
+        return ['edit'];                    // ...and this credential
+    }
+
+    public function executeWrite(WebRequest $rd)
+    {
+        // only runs if the user is authenticated and holds 'edit'
+        return 'Success';
+    }
+}
+```
+
+- **`isSecure()`** — return `true` to require authorization. Default is `false` (open).
+- **`getCredentials()`** — the credential(s) required, in the AND/OR shape above. Return `null` (the default) to require only authentication, not a specific credential.
+
+## How enforcement works
+
+`SecurityMiddleware` runs before dispatch and asks `SecurityService::decide()` for a decision:
+
+```php
+public function decide(Action $action): SecurityDecision
+{
+    if (!$action->isSecure()) {
+        return SecurityDecision::Allow;
+    }
+    $user = $this->controller->getContext()->getUser();
+    if (!$user->isAuthenticated()) {
+        return SecurityDecision::LoginForward;
+    }
+    $cred = $action->getCredentials();
+    if ($cred !== null && !$user->hasCredentials($cred)) {
+        return SecurityDecision::SecureForward;
+    }
+    return SecurityDecision::Allow;
+}
+```
+
+The three outcomes:
+
+| Decision | When | Result |
+|---|---|---|
+| `Allow` | Open action, or authenticated with required credentials | Action runs |
+| `LoginForward` | Secure action, not authenticated | Forward to the `login` system action |
+| `SecureForward` | Authenticated, missing a credential | Forward to the `secure` system action |
+
+On a non-`Allow` decision, `SecurityMiddleware` swaps the `ActionDescriptor` to the `login` or `secure` action, preserving the original under `quiote.original_action`. Forwards are loop-guarded (more than five forwards returns HTTP 508). If security is disabled globally (`core.use_security => false`), everything is allowed. The design fails closed: when an action cannot be created and the user is not authenticated, it forwards to login rather than proceeding.
+
+## CSRF protection
+
+CSRF is on by default (`core.csrf.enabled`), enforced by two middlewares (see [The middleware pipeline](/architecture/middleware-pipeline/)):
+
+- **`CsrfInjectionMiddleware`** injects a hidden token field into every non-GET HTML form, adds a `<meta name="csrf-token">` tag, and sets a readable `XSRF-TOKEN` cookie for SPA clients.
+- **`CsrfValidationMiddleware`** rejects unsafe-method requests (non GET/HEAD/OPTIONS/TRACE) with 403 unless a valid token is present in the form field or the `X-CSRF-Token` header.
+
+Server-rendered forms get tokens automatically. Two things to remember:
+
+- **JS/XHR clients** must send the token in the `X-CSRF-Token` header (read it from the meta tag or the cookie).
+- **Stateless routes** (webhooks, token-authenticated APIs) must opt out with an `_csrf => false` route default.
+
+```php
+$routes->add('webhook', new Route('/hooks/stripe', [
+    '_module' => 'Api', '_action' => 'StripeWebhook', '_csrf' => false,
+]));
+```
+
+## Login rate limiting
+
+The `Quiote\Security\RateLimit` components provide login throttling (`LoginThrottle`) with pluggable storage (e.g. `PdoRateLimiterStorage`), so repeated failed logins can be slowed or blocked. Wire it into your login action to defend against credential-stuffing.

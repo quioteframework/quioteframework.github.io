@@ -1,0 +1,292 @@
+---
+title: Settings reference
+description: The configuration settings Quiote reads — core.* keys, factory parameters, environment variables, and where each is set.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+This page catalogs the configuration Quiote actually reads. For *how* config files work (formats, resolution, inheritance), see [Configuration](/architecture/configuration/). For per-middleware settings in pipeline context, see the [Middleware reference](/architecture/middleware-reference/).
+
+## The four configuration surfaces
+
+Quiote configuration comes from four distinct places. Each setting below states which applies:
+
+1. **`Config` settings** — dotted keys (`core.*`, and a few `routing.*` / `validation.*`) read via `Config::get()`, set in your [`settings` config](/architecture/configuration/) (PHP/YAML/XML).
+2. **Factory parameters** — `<ae:parameter>` children on a `factories` or `databases` entry, passed to a class's `initialize()`. Used by storage, response, database, user, and translation classes.
+3. **Environment variables / PHP constants** — a handful of `QUIOTE_*` vars and constants read directly, mostly for bootstrap and worker mode.
+4. **Programmatic** — logging and the DI container have no config-file surface at all; they are wired in PHP (see [Logging](/architecture/logging/) and [The DI container](/architecture/container/)).
+
+## Core application settings
+
+The settings you set most often. They all live under `core.` and can be written in any format. Many are consumed by a specific middleware — the [Middleware reference](/architecture/middleware-reference/) documents each in pipeline context, with the exact setting-to-middleware mapping.
+
+<Tabs syncKey="config-format">
+<TabItem label="PHP">
+
+```php
+// Config/settings.php
+return [
+    'core.app_name'             => 'MyApp',
+    'core.namespace_prefix'     => 'MyApp',
+    'core.available'            => true,
+    'core.debug'                => false,
+    'core.developer_exceptions' => false,
+    'core.default_context'      => 'web',
+    'core.use_database'         => true,
+    'core.use_logging'          => true,
+    'core.use_security'         => true,
+    'core.use_translation'      => false,
+];
+```
+
+</TabItem>
+<TabItem label="YAML">
+
+```yaml
+# Config/settings.yaml
+core.app_name: MyApp
+core.namespace_prefix: MyApp
+core.available: true
+core.debug: false
+core.developer_exceptions: false
+core.default_context: web
+core.use_database: true
+core.use_logging: true
+core.use_security: true
+core.use_translation: false
+```
+
+</TabItem>
+<TabItem label="XML">
+
+```xml
+<!-- Config/settings.xml -->
+<?xml version="1.0" encoding="UTF-8"?>
+<ae:configurations xmlns:ae="http://quiote.dev/quiote/config/global/envelope/1.1"
+                   xmlns="http://quiote.dev/quiote/config/parts/settings/1.1">
+    <ae:configuration>
+        <settings>
+            <setting name="app_name">MyApp</setting>
+            <setting name="namespace_prefix">MyApp</setting>
+            <setting name="available">true</setting>
+            <setting name="debug">false</setting>
+            <setting name="developer_exceptions">false</setting>
+            <setting name="default_context">web</setting>
+            <setting name="use_database">true</setting>
+            <setting name="use_logging">true</setting>
+            <setting name="use_security">true</setting>
+            <setting name="use_translation">false</setting>
+        </settings>
+    </ae:configuration>
+</ae:configurations>
+```
+
+</TabItem>
+</Tabs>
+
+### Identity and mode
+
+| Key | Default | Effect |
+|---|---|---|
+| `core.app_name` | — | Application name. |
+| `core.namespace_prefix` | `'App'` | Base PHP namespace for resolving models, modules, and attribute-routed actions. |
+| `core.available` | `true` | Application availability flag. |
+| `core.debug` | `false` | Debug mode. When true, config is recompiled from source on each load rather than trusting a stale compiled cache. |
+| `core.developer_exceptions` | `false` | `true` → detailed Whoops error page; `false` → safe generic response. Independent of `core.debug`. See [ErrorHandlingMiddleware](/architecture/middleware-reference/#errorhandlingmiddleware). |
+| `core.environment` | — (required) | Environment name; supplied via the kernel (`env`) or bootstrap. Becomes readonly once set. |
+| `core.default_context` | `'web'` | Default context/profile name (falls back to the `QUIOTE_CONTEXT` env var). |
+| `core.context_implementation` | `Context` | A `Context` subclass to instantiate instead of the base class. |
+
+### Subsystem switches
+
+| Key | Default | Effect |
+|---|---|---|
+| `core.use_database` | `false` | Enables the database layer. When false, `DatabaseManager` still exists but opens no connection. |
+| `core.use_security` | `true` | When false, all security checks are bypassed (`SecurityDecision::Allow` forced). See [SecurityMiddleware](/architecture/middleware-reference/#securitymiddleware) and [Authentication & authorization](/advanced/authentication-authorization/). |
+| `core.use_translation` | `false` | Gates whether the translation manager is returned. |
+
+Scaffolded apps also carry `core.use_logging`; logging itself is configured programmatically (see [Logging](/architecture/logging/)), not by this flag.
+
+### Caching
+
+| Key | Default | Effect |
+|---|---|---|
+| `core.cache_enabled` | `false` | Master switch for action/view caching. |
+| `core.use_cache` | `false` | Whether a cache instance is built for the request. **Caching needs both this and `core.cache_enabled`.** |
+| `core.cache_backend` | filesystem | Set to `'apcu'` to use APCu (only if `apcu_enabled()` at runtime; otherwise silently falls back to filesystem). |
+
+Both keys are read by [DispatchMiddleware](/architecture/middleware-reference/#dispatchmiddleware). This is the general-purpose PSR-16 cache — separate from the APCu *config-cache* prewarm (`core.apcu_prewarm` / `QUIOTE_APCU_PREWARM`), which caches compiled config.
+
+### HTTP and response headers
+
+| Key | Default | Effect |
+|---|---|---|
+| `core.disable-framework-headers` | `false` | If truthy, skips the framework response-header block entirely. |
+| `core.cache-hit-header` | `'X-Quiote-Cache-Hit'` | Header sent (value `1`) on a cache hit; empty value suppresses it. |
+| `core.send-nosniff-header` | `true` | Whether `X-Content-Type-Options: nosniff` is added when absent. |
+| `core.expose_quiote_version` | `ini_get('expose_php')` | If truthy, `X-Powered-By` includes the framework version; otherwise just the name. |
+| `core.trusted_hosts` | `[]` (no restriction) | Host-header allowlist (array value). Entries wrapped in `/…/` are regexes; others match case-insensitively. A non-matching `Host` is replaced with the first literal entry. |
+| `core.correlation_id.header` | `'X-Correlation-Id'` | Inbound header adopted as the request's correlation id (sanitized, length-capped); absent → one is generated. Echoed back on the response. See [Logging → Correlation IDs](/architecture/logging/#correlation-ids). |
+| `core.correlation_id.expose` | `true` | Whether the correlation id is echoed back on the response under the same header. |
+
+The response-header keys (`disable-framework-headers`, `cache-hit-header`, `send-nosniff-header`) are read by [DispatchMiddleware](/architecture/middleware-reference/#dispatchmiddleware).
+
+### Security and validation
+
+Full documentation for these lives elsewhere — this table is the index:
+
+- **CSRF** — the complete `core.csrf.*` set: [Middleware reference → CsrfValidationMiddleware](/architecture/middleware-reference/#csrfvalidationmiddleware); usage and per-route opt-out: [Authentication & authorization → CSRF](/advanced/authentication-authorization/#csrf-protection).
+- **Validation** — how validators run and the error response: [Middleware reference → ValidationMiddleware](/architecture/middleware-reference/#validationmiddleware) and [Input validation](/basics/validation/).
+
+| Key | Default | Effect |
+|---|---|---|
+| `core.csrf.enabled` | `true` | Master CSRF switch. Full `core.csrf.*` set: [Middleware reference](/architecture/middleware-reference/#csrfvalidationmiddleware); usage: [Authentication & authorization](/advanced/authentication-authorization/#csrf-protection). |
+| `core.expose_validation_errors_header` | `false` | If true, attaches validator errors as `X-Quiote-Validation-Errors` on a 400 — leaks internal structure; dev/test only. See [ValidationMiddleware](/architecture/middleware-reference/#validationmiddleware) and [Input validation](/basics/validation/). |
+
+### Keys under other prefixes
+
+A few settings deliberately live outside `core.` — in XML they need a `<settings prefix="…">` wrapper (see [Configuration → The XML `prefix` attribute](/architecture/configuration/#the-xml-prefix-attribute)):
+
+| Key | Default | Effect |
+|---|---|---|
+| `routing.http_method_map` | `[]` | Overrides the HTTP-verb → action-method map. See [Routing](/basics/routing/#customising-the-http-verb-mapping). |
+| `validation.reject_unknown_parameters` | `'throw'` | Compile-time handling of an unknown validator parameter: `'throw'`, `'warn'`, or `'off'`. See [Input validation](/basics/validation/) and [Advanced validation](/advanced/advanced-validation/). |
+| `telemetry.*` | off | OpenTelemetry tracing/metrics — `telemetry.enabled`, `telemetry.exporter`, `telemetry.sampling.*`, `telemetry.spans.*`, and more. The full table is on the [Telemetry](/architecture/telemetry/) page. |
+| `plugins` | `[]` | List of plugin class-strings to register at boot (a **bare** key — in XML use `prefix=""`). See [Plugins and extensibility](/architecture/plugins/). |
+
+### Telemetry
+
+Telemetry is off by default; enable it and choose an exporter under the `telemetry.` prefix (full settings table: [Telemetry](/architecture/telemetry/)):
+
+<Tabs syncKey="config-format">
+<TabItem label="PHP">
+
+```php
+// Config/settings.php
+'telemetry.enabled'  => true,
+'telemetry.exporter' => 'otlp',
+```
+
+</TabItem>
+<TabItem label="YAML">
+
+```yaml
+# Config/settings.yaml
+telemetry.enabled: true
+telemetry.exporter: otlp
+```
+
+</TabItem>
+<TabItem label="XML">
+
+```xml
+<!-- Config/settings.xml -->
+<settings prefix="telemetry.">
+  <setting name="enabled">true</setting>
+  <setting name="exporter">otlp</setting>
+</settings>
+```
+
+</TabItem>
+</Tabs>
+
+## Framework paths
+
+Set during bootstrap. `core.app_dir` is **required** (supplied by the front controller / `Kernel`); the rest are derived from it and marked **readonly** — you cannot override them from `settings`.
+
+| Key | Default | Notes |
+|---|---|---|
+| `core.app_dir` | — (required) | Application root. Set by the front controller before bootstrap. |
+| `core.config_dir` | `` `{app_dir}/Config` `` | readonly |
+| `core.cache_dir` | `` `{app_dir}/cache` `` | readonly |
+| `core.module_dir` | `` `{app_dir}/Modules` `` | readonly |
+| `core.model_dir` | `` `{app_dir}/Models` `` | readonly |
+| `core.template_dir` | `` `{app_dir}/Templates` `` | readonly |
+| `core.lib_dir` | `` `{app_dir}/Lib` `` | readonly |
+| `core.quiote_dir` | framework source dir | readonly |
+| `core.system_config_dir` | `` `{quiote_dir}/Config/defaults` `` | readonly |
+
+## Factory parameters
+
+These are `<ae:parameter>` children on a `factories` (or `databases`) entry — not `core.*` keys. See [Configuration → factories](/architecture/configuration/#factories).
+
+### Storage (`storage` role)
+
+`SessionStorage` (PHP-native sessions):
+
+| Parameter | Default | Effect |
+|---|---|---|
+| `session_name` | `'Quiote'` | Session cookie name. |
+| `session_cookie_lifetime` | php.ini | Cookie lifetime (seconds, or a `strtotime` string). |
+| `session_cookie_secure` | `true` | HTTPS-only cookie (secure by default; the code will not emit a non-secure cookie). |
+| `session_cookie_httponly` | php.ini | HttpOnly flag. |
+| `session_cache_limiter` / `session_cache_expire` / `session_save_path` / `session_module_name` | php.ini | Applied only if present. |
+
+`SameSite=Lax` is applied automatically when not already set in php.ini. `PdoSessionStorage` adds `db_table` (**required**), `database`, `db_id_col`, `db_data_col`, `db_time_col`, `data_as_lob`, and `date_format`. `NullStorage` takes no parameters.
+
+### Database (`databases` entries)
+
+`PdoDatabase`:
+
+| Parameter | Default | Effect |
+|---|---|---|
+| `dsn` | — (required) | PDO DSN string. |
+| `username` / `password` | — | Credentials. |
+| `options` | `[]` | PDO constructor options (`::`-constants are resolved). |
+| `attributes` | `ERRMODE_EXCEPTION` | `setAttribute()` calls; the exception error-mode default cannot be turned off, only added to. |
+| `init_queries` | `[]` | SQL run immediately after connecting. |
+| `warn_mysql_charset` | `true` | Rejects unsafe `SET NAMES` in `init_queries` for MySQL DSNs. |
+
+The Doctrine (`DoctrineDatabase`, `Doctrine2*`) and `PropelDatabase` connectors have their own parameter sets — see the framework's `Quiote/Database/` classes.
+
+### Response (`response` role)
+
+`WebResponse` cookie/output parameters include `cookie_lifetime` (`0`), `cookie_path`, `cookie_domain`, `cookie_secure`, `cookie_httponly` (`true`), `cookie_samesite` (`'Lax'`), `send_content_length` (`true`), `send_redirect_content` (`false`), `expose_quiote` (`true`), and `use_sendfile_header` (`false`) / `sendfile_header_name` (`'X-Sendfile'`).
+
+### User (`user` role)
+
+| Parameter | Default | Effect |
+|---|---|---|
+| `definitions_file` | `` `{config_dir}/rbac_definitions.xml` `` | RBAC role/permission definitions file. |
+| `storage_namespace` | `'org.quiote.user.User'` | Namespace for user attributes in storage. |
+
+## Environment variables and PHP constants
+
+| Name | Default | Effect |
+|---|---|---|
+| `QUIOTE_ENV` | `'prod'` | Environment name → `core.environment`. Note: the scaffolded `pub/index.php` passes `'development'` explicitly, so the effective default depends on your front controller. |
+| `QUIOTE_CONTEXT` | `'web'` | Primary context to create/prime. |
+| `QUIOTE_MAX_REQUESTS` | `1000` | FrankenPHP worker requests before a deep cleanup. |
+| `QUIOTE_JSON_STRICT` | strict on | Set to `0` to tolerate malformed JSON bodies instead of returning 400. See [PayloadParsingMiddleware](/architecture/middleware-reference/#payloadparsingmiddleware). |
+| `QUIOTE_APCU_PREWARM` | unset | With APCu config-cache active, forces config prewarm (`1`/`true`/`yes`/`on`). |
+| `QUIOTE_APP_DIR` | — | CLI app-dir fallback when `--app-dir` is not passed. |
+| `QUIOTE_USE_APCU_CONFIG_CACHE` (PHP constant) | — | If defined truthy, compiled config is cached in APCu instead of on disk. |
+| `NO_COLOR` | — | Standard no-color signal honoured by `AnsiTextStreamSink`. |
+
+Worker mode itself is not configurable — the kernel selects `FrankenPhpWorkerAdapter` when `frankenphp_handle_request()` exists, otherwise `SingleRequestAdapter`.
+
+## The Config API
+
+Settings resolve at runtime through the static `Quiote\Config\Config` store:
+
+| Method | Behaviour |
+|---|---|
+| `Config::get($name, $default = null)` | Read a value, or the default if unset. |
+| `Config::has($name)` | Whether the key is set (even to `null`). |
+| `Config::set($name, $value, $overwrite = true, $readonly = false)` | Set a value; readonly keys reject further writes. |
+| `Config::isReadonly($name)` | Whether the key is locked (the derived path keys are). |
+| `Config::remove($name)` | Unset a key, unless readonly. |
+| `Config::fromArray($data)` | Bulk-import a flat dotted map (what compiled `settings` files call). |
+| `Config::resetWorkerState($preserveKeys = [])` | Worker-mode reset: keeps readonly keys plus named keys, drops the rest. |
+
+## Configured elsewhere (not `settings`)
+
+- **Logging** — levels and sinks are programmatic, set before `Kernel::run()`. See [Logging](/architecture/logging/).
+- **Telemetry category filtering** — the per-category span on/off map is programmatic (`Trace::setCategories()` in `index.php`), like logging; the rest of telemetry is `telemetry.*` settings. See [Telemetry](/architecture/telemetry/#category-filtering).
+- **DI container** — wired entirely in PHP (attributes + `Container::set()`); no config-file surface. See [The DI container](/architecture/container/).
+- **Translation** — a separate `translation.xml` (locales, domains, formatters), not `settings`.
+- **Per-middleware behaviour** — see the [Middleware reference](/architecture/middleware-reference/).
+- **Event listeners** — registered programmatically via `Events::listen()` (or a plugin's `listen()`), not `settings`. See [Events](/architecture/events/).
+- **HTTP clients** — named clients are configured programmatically on `HttpClientFactory` (or a plugin's `httpClient()`), not `settings`. See [HTTP client](/basics/http-client/).
+- **Plugins** — *which* plugins load is the `plugins` setting (above); what each contributes is code. See [Plugins and extensibility](/architecture/plugins/).
+- **Output types, routes, validators** — their own config files; see [Output types](/basics/output-types-and-content-negotiation/), [Routing](/basics/routing/), [Validation](/basics/validation/).

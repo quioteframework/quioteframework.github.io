@@ -1,0 +1,151 @@
+---
+title: Worker mode & deployment
+description: Running Quiote under FrankenPHP worker mode — the worker loop, per-request reset, state-leak hazards, environment variables, and Docker.
+---
+
+Quiote's primary deployment target is **FrankenPHP in worker mode**: the application is bootstrapped once per worker process and stays resident in memory, and each HTTP request reuses that warm process. This is what makes Quiote fast — no per-request bootstrap — and it is also the single thing that most changes how you must write code, because state now outlives a request.
+
+This page covers how the worker runs, what the framework resets between requests, the state-leak hazards that come with a long-lived process, and how to deploy with Docker. For the request path *within* one request, see [The request lifecycle](/architecture/request-lifecycle/).
+
+## The front controller
+
+The entrypoint is a plain PHP file — for the scaffolded app, `pub/index.php`. The same file serves as both the classic front controller *and* the FrankenPHP worker script; there is no separate worker template. It ends by handing off to the kernel:
+
+```php
+Quiote\Runtime\Kernel::create([
+    'app_dir' => dirname(__DIR__),
+    'env'     => getenv('QUIOTE_ENV') ?: 'development',
+    'context' => 'web',
+])->run();
+```
+
+`Kernel::run()` bootstraps the app once, then either enters the worker loop (if running under FrankenPHP) or handles a single request and exits (classic PHP-FPM / `php -S`). The adapter is chosen automatically: if `frankenphp_handle_request()` exists, the kernel uses `FrankenPhpWorkerAdapter`; otherwise it falls back to `SingleRequestAdapter`. The same code deploys both ways.
+
+## The worker loop
+
+Under FrankenPHP the kernel runs this loop, in essence:
+
+```php
+while (frankenphp_handle_request($handle)) {
+    $reset();   // runs after every handled request
+}
+```
+
+- **`$handle`** builds a PSR-7 request from the superglobals, dispatches it through the context (`$context->handle($request)`), and emits the response.
+- **`$reset`** runs *after every request* and is the heart of worker-mode correctness. It resets per-request state so the next request starts clean, then flushes telemetry.
+
+The request is rebuilt from globals on every iteration rather than reused, so request-scoped data never carries over by accident.
+
+## Per-request reset
+
+Two layers cooperate to clear state between requests.
+
+**`WorkerManager::resetForNextRequest()`** is the top-level orchestrator. In order, it:
+
+1. Increments the request counter and reset statistics.
+2. Calls `$context->reset()` (the real state clearer, below).
+3. Resets the routing callback pool.
+4. Every *N* requests (`QUIOTE_MAX_REQUESTS`, default 1000) runs a deeper cleanup — full callback-pool clear plus repeated GC.
+5. Forces `gc_collect_cycles()`.
+
+Config is deliberately **not** reset — it is treated as immutable for the worker's lifetime.
+
+**`Context::reset()`** does the per-request clearing, and the *order* matters:
+
+- Clears cached singleton model instances and the slot dispatcher.
+- Walks a shutdown sequence: the **storage is `shutdown()` before it is `reset()`**, so dirty session data is persisted before in-memory state is dropped; the database manager **recycles connections** (ping and drop dead ones) rather than fully closing — the manager stays warm to avoid re-init cost.
+- Nulls `storage` (so the next request runs `session_start()` fresh), `user`, and `request`.
+- Resets the routing object — explicitly, to prevent route-cache corruption across requests.
+- Calls `$container->reset()` — which drops only **request-scoped** DI entries; singletons and definitions stay warm (that is what keeps the container fast).
+- Calls `LogContext::clear()` — drops the ambient logging scopes (correlation id, user) so request *N*'s identifiers never appear on request *N+1*'s log lines.
+
+## State-leak hazards
+
+A resident process turns several ordinary patterns into bugs. The framework guards the ones it owns; the rest are on you.
+
+| Hazard | Framework mitigation | Your responsibility |
+|---|---|---|
+| Singletons holding request data | `Context::reset()` nulls request/user/storage and clears model singletons | Don't cache request-derived data on a singleton service ([scope it](/architecture/container/) request or transient) |
+| Session state persisting/leaking | Storage `shutdown()` (persist) before `reset()`, then nulled | — |
+| DI request-scoped instances | `Container::reset()` clears them each request | Register stateful services as `SCOPE_REQUEST`, not singleton |
+| Logging context leak | `LogContext::clear()` each request | Use the logging context API, not static fields |
+| Stale DB connections / open transactions | `recycleConnections()` each request | For strict rollback, use `WorkerManager::manageDatabaseConnections('reset')` |
+| Proxy-derived `$_SERVER` | Re-derived per request from forwarded headers before the request is built | — |
+| Unbounded memory growth | Periodic deep cleanup + GC every request | Don't accumulate into static arrays without bounds |
+
+The one rule that prevents most worker-mode bugs: **do not store request-scoped data on anything that lives longer than the request.** When in doubt about a service, prefer request or transient scope — see [The DI container](/architecture/container/#scopes).
+
+:::caution[The `CacheManager` version memo is not auto-reset]
+`CacheManager` keeps an in-process memo of namespace versions that is *not* cleared by the worker reset. In a multi-worker deployment, a version bumped by one worker may not be seen by another until its memo is refreshed. If you rely on cross-worker cache invalidation being instant, call `CacheManager::reset()` or design around TTLs. See [Caching](/basics/caching/#worker-mode-and-invalidation).
+:::
+
+## Environment variables
+
+Quiote reads a handful of `QUIOTE_*` variables directly, mostly at bootstrap and in worker mode. The ones you actually set in deployment:
+
+| Variable | Default | Effect |
+|---|---|---|
+| `QUIOTE_ENV` | `development` (sample) / `prod` (kernel) | Environment name; selects env-specific config. |
+| `QUIOTE_CONTEXT` | `web` | The context to bootstrap. |
+| `QUIOTE_APP_DIR` | upward search | Application root (used by the CLI and bootstrap). |
+| `QUIOTE_MAX_REQUESTS` | `1000` | Requests between deep cleanups (callback-pool clear + GC). |
+
+Additional `QUIOTE_*` variables exist for finer control — APCu config caching (`QUIOTE_USE_APCU_CONFIG_CACHE`, `QUIOTE_APCU_PREWARM`), DI-migration toggles (`QUIOTE_NO_CONTAINER_ALL`, `QUIOTE_CONTAINER_DEPRECATION_STRICT`, and related), and the test-isolation family (`QUIOTE_TESTING_*`, `QUIOTE_ISOLATION_*`, see [Testing](/advanced/testing/)). These are advanced knobs; the four above are what a normal deployment touches.
+
+## Running under FrankenPHP
+
+The Caddyfile declares the worker entrypoint and how many resident workers to run:
+
+```caddyfile
+{
+    frankenphp {
+        worker {
+            file /app/pub/index.php
+            num 2
+        }
+    }
+}
+
+:80 {
+    root * /app/pub
+    encode zstd gzip
+    php_server
+}
+```
+
+`num` is the number of resident worker processes. Start with one per CPU core and tune under load.
+
+## Docker
+
+The framework ships a `Dockerfile` on top of `dunglas/frankenphp`. It installs the PHP extensions Quiote needs — **`intl`** (i18n formatters) and **`xsl`** (XSLT rendering and XML config transforms) — installs dependencies with `composer install --no-dev`, copies the Caddyfile, and runs FrankenPHP:
+
+```dockerfile
+FROM dunglas/frankenphp
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        git unzip libicu-dev libxslt1-dev \
+    && docker-php-ext-install intl xsl \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
+WORKDIR /app
+COPY . /app/
+RUN composer install --no-interaction --no-progress --prefer-dist --no-dev
+COPY Caddyfile /etc/caddy/Caddyfile
+EXPOSE 80
+CMD ["frankenphp", "run", "--config", "/etc/caddy/Caddyfile"]
+```
+
+With the provided `docker-compose.yml`:
+
+```bash
+docker compose build
+docker compose up
+# the sample maps host 8080 -> container 80
+```
+
+Then visit `http://localhost:8080/`. The compose file mounts the app for live editing and adds an HTTP healthcheck; strip those for a production image.
+
+## Deploying without worker mode
+
+Because the adapter is chosen at runtime, the same app runs under classic PHP for environments where FrankenPHP isn't an option — behind PHP-FPM with `try_files … /index.php`, or `php -S localhost:8000 pub/index.php` for a smoke test. You lose the warm-process speedup, but nothing in your application changes. `Caddyfile.example` at the repo root is a non-worker production template with real TLS, security headers, and access logging.

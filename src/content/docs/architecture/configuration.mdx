@@ -1,0 +1,257 @@
+---
+title: Configuration
+description: Quiote's multi-format config system — PHP, YAML, or XML, mixed per file.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+Agavi's configuration was XML-only. Quiote keeps the same conceptual config *types* — `settings`, `factories`, `databases`, `output_types`, and so on — but lets you write each one as **PHP, YAML, or XML**, chosen per file. This is a direct expression of Quiote's unopinionated stance: the framework does not decide what your config looks like on disk.
+
+## The formats
+
+Each format is a driver under `Quiote\Config\Format`:
+
+| Format | Extensions | Driver | Notes |
+|---|---|---|---|
+| PHP array | `.php` | `PhpArrayFormatDriver` | Recommended default — zero parse cost beyond opcache, full IDE support |
+| YAML | `.yaml`, `.yml` | `YamlFormatDriver` | Concise; good for flat manifests |
+| XML | `.xml` | `XmlFormatDriver` | The legacy format; still fully supported |
+
+You can mix formats across files in one application — `settings.php` alongside `factories.yaml` alongside `databases.xml` is a supported, tested combination.
+
+## Format resolution
+
+When Quiote needs a config, it looks for the base name (e.g. `settings`) and resolves the extension in priority order **PHP → YAML → XML** (`FormatDriverRegistry::locate()`). The first match wins. So if both `settings.php` and `settings.xml` exist, the PHP file is used.
+
+You do not usually configure this — autodetection by extension is the default. Where you need to force a format, `core.config_format` overrides the choice.
+
+## Inheritance: `parent` and `imports`
+
+Config files compose. A file can name a **parent** (whose values it overrides) and **imports** (files merged in). These cross references resolve *through the format registry*, so a PHP config can extend a YAML parent, and YAML can import values that originated in XML. Format and inheritance are orthogonal.
+
+## The core config types
+
+An application typically has these, in `Config/`:
+
+| Type | What it declares |
+|---|---|
+| `settings` | Application-wide flags and paths (`core.*` keys) |
+| `factories` | Which class fills each core role (controller, request, routing, user, …) |
+| `databases` | Database connections and their parameters |
+| `output_types` | Output types, their renderers, layouts, and headers |
+| `validators` | (Per module/action) input validators |
+| `routing` | Routes — though a `Routing` subclass is the supported way today |
+
+### settings
+
+`settings` holds `core.*` keys read across the framework. The same settings, in each format:
+
+<Tabs syncKey="config-format">
+<TabItem label="PHP">
+
+```php
+// Config/settings.php
+return [
+    'core.app_name'         => 'MyApp',
+    'core.namespace_prefix' => 'MyApp',
+    'core.available'        => true,   // false → maintenance mode
+    'core.debug'            => false,
+    'core.use_database'     => true,
+    'core.use_logging'      => true,
+    'core.use_security'     => true,
+    'core.use_translation'  => false,
+    'core.default_context'  => 'web',
+];
+```
+
+</TabItem>
+<TabItem label="YAML">
+
+```yaml
+# Config/settings.yaml
+core.app_name: MyApp
+core.namespace_prefix: MyApp
+core.available: true        # false → maintenance mode
+core.debug: false
+core.use_database: true
+core.use_logging: true
+core.use_security: true
+core.use_translation: false
+core.default_context: web
+```
+
+</TabItem>
+<TabItem label="XML">
+
+```xml
+<!-- Config/settings.xml -->
+<?xml version="1.0" encoding="UTF-8"?>
+<ae:configurations xmlns:ae="http://quiote.dev/quiote/config/global/envelope/1.1"
+                   xmlns="http://quiote.dev/quiote/config/parts/settings/1.1">
+    <ae:configuration>
+        <settings>
+            <setting name="app_name">MyApp</setting>
+            <setting name="namespace_prefix">MyApp</setting>
+            <setting name="available">true</setting>
+            <setting name="debug">false</setting>
+            <setting name="use_database">true</setting>
+            <setting name="use_logging">true</setting>
+            <setting name="use_security">true</setting>
+            <setting name="use_translation">false</setting>
+            <setting name="default_context">web</setting>
+        </settings>
+    </ae:configuration>
+</ae:configurations>
+```
+
+</TabItem>
+</Tabs>
+
+The `core.use_*` switches turn whole subsystems on or off. `core.use_database => false`, for instance, means the database manager is still created (it is a required role) but no connection is ever opened.
+
+Note how the formats differ in shape: **PHP and YAML use the full dotted key directly** (`core.debug`), while **XML nests `<setting>` elements** and derives the prefix from the wrapper (below). All three compile to the same flat, dotted key space. XML text values are literalized — `true` / `false` become booleans, matching the PHP and YAML values.
+
+#### The XML `prefix` attribute
+
+Each XML `<setting>` compiles to a **`core.`-prefixed** key by default — `<setting name="debug">` becomes `core.debug`. The prefix lives on the enclosing `<settings>` element, not the individual setting, as an optional `prefix` attribute. To land a setting under a different namespace (say `routing.*`), set the prefix there. The same `routing.http_method_map` setting in each format:
+
+<Tabs syncKey="config-format">
+<TabItem label="PHP">
+
+```php
+// Config/settings.php
+'routing.http_method_map' => [
+    'PATCH' => 'write',
+    'LOCK'  => 'lock',
+],
+```
+
+</TabItem>
+<TabItem label="YAML">
+
+```yaml
+# Config/settings.yaml
+routing.http_method_map:
+  PATCH: write
+  LOCK: lock
+```
+
+</TabItem>
+<TabItem label="XML">
+
+```xml
+<!-- Config/settings.xml -->
+<settings prefix="routing.">
+  <setting name="http_method_map">
+    <ae:parameter name="PATCH">write</ae:parameter>
+    <ae:parameter name="LOCK">lock</ae:parameter>
+  </setting>
+</settings>
+```
+
+</TabItem>
+</Tabs>
+
+All three compile to `['routing.http_method_map' => ['PATCH' => 'write', 'LOCK' => 'lock']]`. In XML, nested `<ae:parameter>` elements under a `<setting>` become an associative array keyed by their `name` attribute (applied recursively) — that is how an XML setting carries a map instead of a scalar. **PHP and YAML have no prefix mechanism**: you write `'routing.http_method_map'` as the key directly.
+
+### factories
+
+`factories` is Quiote's service manifest — it names the class for each of the standard roles, and optional constructor `params` for each:
+
+<Tabs syncKey="config-format">
+<TabItem label="PHP">
+
+```php
+// Config/factories.php
+return [
+    'controller'         => ['class' => \Quiote\Controller\Controller::class,      'params' => []],
+    'response'           => ['class' => \Quiote\Response\WebResponse::class,        'params' => []],
+    'routing'            => ['class' => \MyApp\Routing\AppRouting::class,           'params' => []],
+    'request'            => ['class' => \Quiote\Request\WebRequest::class,          'params' => []],
+    'storage'            => ['class' => \Quiote\Storage\NullStorage::class,         'params' => []],
+    'user'               => ['class' => \Quiote\User\RbacSecurityUser::class,       'params' => []],
+    'database_manager'   => ['class' => \Quiote\Database\DatabaseManager::class,    'params' => []],
+    'validation_manager' => ['class' => \Quiote\Validator\ValidationManager::class, 'params' => []],
+];
+```
+
+</TabItem>
+<TabItem label="YAML">
+
+```yaml
+# Config/factories.yaml
+controller:
+  class: Quiote\Controller\Controller
+  params: []
+response:
+  class: Quiote\Response\WebResponse
+  params: []
+routing:
+  class: MyApp\Routing\AppRouting
+  params: []
+request:
+  class: Quiote\Request\WebRequest
+  params: []
+storage:
+  class: Quiote\Storage\NullStorage
+  params: []
+user:
+  class: Quiote\User\RbacSecurityUser
+  params: []
+database_manager:
+  class: Quiote\Database\DatabaseManager
+  params: []
+validation_manager:
+  class: Quiote\Validator\ValidationManager
+  params: []
+```
+
+</TabItem>
+<TabItem label="XML">
+
+```xml
+<!-- Config/factories.xml -->
+<?xml version="1.0" encoding="UTF-8"?>
+<ae:configurations xmlns:ae="http://quiote.dev/quiote/config/global/envelope/1.1"
+                   xmlns="http://quiote.dev/quiote/config/parts/factories/1.1">
+    <ae:configuration>
+        <controller class="Quiote\Controller\Controller"/>
+        <response class="Quiote\Response\WebResponse"/>
+        <routing class="MyApp\Routing\AppRouting"/>
+        <request class="Quiote\Request\WebRequest"/>
+        <storage class="Quiote\Storage\NullStorage"/>
+        <user class="Quiote\User\RbacSecurityUser"/>
+        <database_manager class="Quiote\Database\DatabaseManager"/>
+        <validation_manager class="Quiote\Validator\ValidationManager"/>
+    </ae:configuration>
+</ae:configurations>
+```
+
+</TabItem>
+</Tabs>
+
+In PHP and YAML, include `params` for every role — an empty `[]` is fine, but the key must be present (it is passed to each role's constructor). In XML, role elements are direct children of `<ae:configuration>`, and params are `<ae:parameter>` children of a role element (omit them for none). You swap a role's implementation by changing its `class` — e.g. pointing `user` at your own `RbacSecurityUser` subclass, or `routing` at your app's `Routing` subclass. This is the primary extension seam for the framework's core objects.
+
+## Reading config at runtime
+
+Config values are a flat, dotted key space accessed through the static `Quiote\Config\Config` registry:
+
+```php
+use Quiote\Config\Config;
+
+$name  = Config::get('core.app_name');
+$debug = Config::get('core.debug', false); // with a default
+if (Config::has('core.custom_flag')) {
+    // ...
+}
+```
+
+Keys are always the dotted strings you see in `settings` — the format you wrote them in does not change how you read them.
+
+## Environments and contexts
+
+`Kernel::create(['env' => 'production'])` sets the environment. Config files can carry environment- and context-specific overlays (`development.*`, `testing.*`, `production.*`), which are merged over the base values when that environment or context is active. This is how one config file serves dev, test, and prod without duplication.
+
+## Caching
+
+Config is compiled and cached so it is not re-parsed on every request. Under persistent workers (FrankenPHP), an APCu-backed cache is used when the extension is enabled; otherwise a file cache. PHP-array configs are already opcache-friendly, so the format that needs the least caching machinery is also the fastest.

@@ -1,0 +1,161 @@
+---
+title: Writing a custom validator
+description: The Validator base class contract, the validators.xml format, and wiring a custom validator in XML or PHP.
+---
+
+[Advanced validation](/advanced/advanced-validation/) shows how to plug a custom validator in with `raw()`. This page goes a level down: the `Validator` base class contract, the `validators.xml` file format, and how validators are discovered and compiled — what you need when a built-in validator won't do.
+
+## The Validator contract
+
+A custom validator extends `Quiote\Validator\Validator` and implements one method:
+
+```php
+protected abstract function validate(): bool;
+```
+
+Return `true` to pass, `false` to fail. Everything else — severity, error reporting, whitelisting, dependency ordering — is handled by the base class. The methods you use inside `validate()`:
+
+| Method | Purpose |
+|---|---|
+| `getData($paramName)` | Read the input value (honours the `source` and base-path parameters). |
+| `getArgument($name = null)` | The request-parameter name this validator is bound to. |
+| `getArguments()` | All bound argument names (for multi-argument validators). |
+| `getParameter($name, $default)` | Read a validator parameter. |
+| `throwError($index = null)` | Record a validation error, using the named error message. |
+| `export($value, $argument = null)` | Write a sanitized value back into the request. |
+
+### Declaring accepted parameters
+
+A validator whitelists the parameters it understands via a static method. Override it and merge with the parent's:
+
+```php
+public static function getAcceptedParameters(): array
+{
+    return array_merge(parent::getAcceptedParameters(), ['min_score']);
+}
+```
+
+This is checked at compile time, so a misspelled parameter surfaces as an error rather than being silently ignored.
+
+### A complete validator
+
+```php
+<?php
+namespace App\Validator;
+
+use Quiote\Validator\Validator;
+
+final class StrongPasswordValidator extends Validator
+{
+    public static function getAcceptedParameters(): array
+    {
+        return array_merge(parent::getAcceptedParameters(), ['min_score']);
+    }
+
+    protected function validate(): bool
+    {
+        $password = $this->getData($this->getArgument());
+
+        if (!is_scalar($password)) {
+            $this->throwError();
+            return false;
+        }
+
+        if ($this->scoreOf((string) $password) < (int) $this->getParameter('min_score', 3)) {
+            $this->throwError();            // uses the configured <error> message
+            return false;
+        }
+
+        return true;
+    }
+
+    private function scoreOf(string $password): int { /* ... */ }
+}
+```
+
+`throwError()` with no argument uses the validator's default error message; pass an index (`throwError('min')`) to select a named message, matching an `<error for="min">` in the config. The base class applies the `translation_domain` if you set one, so error messages can be [translated](/basics/i18n/).
+
+## Wiring it in
+
+You register a validator two ways, and both end up feeding the same validation manager for the action — so you can mix them and migrate one at a time.
+
+### In PHP (recommended for new code)
+
+Create `Modules/{Module}/Validate/{Action}.php` returning a callable that receives a `ValidatorBuilder`. The action picks it up automatically — no XML, no registration:
+
+```php
+<?php
+use Quiote\Validator\Compiler\Runtime\ValidatorBuilder;
+
+return function (ValidatorBuilder $v): void {
+    $v->email('email');
+    $v->string('name', required: true)->minLength(2);
+
+    // Any validator without a dedicated helper — including your own:
+    $v->raw(\App\Validator\StrongPasswordValidator::class, ['password'], ['min_score' => 3]);
+
+    if ($v->method() === 'write') {
+        $v->group('or', function (ValidatorBuilder $g): void {
+            $g->email('contact');
+            $g->regex('contact', '/^\+?\d{7,}$/');
+        });
+    }
+};
+```
+
+`ValidatorBuilder` has typed helpers (`string()`, `email()`, `number()`, `regex()`, `group()` for and/or/not/xor, and `raw()` for any class). This is the same builder documented in [Advanced validation](/advanced/advanced-validation/); registering this way gives you the strict-mode whitelist automatically.
+
+### In XML
+
+The file-based format lives at `Modules/{Module}/Validate/{Action}.xml`. Declare a reusable alias with `<validator_definition>` (default parameters and messages), then apply validators to arguments:
+
+```xml
+<ae:configurations
+    xmlns="http://quiote.dev/quiote/config/parts/validators/1.1"
+    xmlns:ae="http://quiote.dev/quiote/config/global/envelope/1.1"
+    parent="%core.config_dir%/validators.xml">
+  <ae:configuration>
+
+    <validator_definitions>
+      <validator_definition name="strongpassword" class="App\Validator\StrongPasswordValidator">
+        <ae:parameter name="min_score">3</ae:parameter>
+        <error>Password is too weak.</error>
+      </validator_definition>
+    </validator_definitions>
+
+    <validators method="write">
+      <validator name="email" class="email" required="true" severity="error">
+        <argument>email</argument>
+        <error>Please enter a valid email address.</error>
+      </validator>
+
+      <validator name="pw" class="strongpassword">
+        <argument>password</argument>
+      </validator>
+
+      <!-- grouping: contact must be an email OR a phone number -->
+      <validator name="either" class="or">
+        <validator class="email"><argument>contact</argument></validator>
+        <validator class="regex">
+          <ae:parameter name="pattern">/^\+?\d{7,}$/</ae:parameter>
+          <argument>contact</argument>
+        </validator>
+      </validator>
+    </validators>
+
+  </ae:configuration>
+</ae:configurations>
+```
+
+The `class` attribute takes either a registered alias (`email`, `or`, `regex`, `string`, …) or a fully-qualified class name. Common attributes on `<validator>`: `name`, `class`, `required`, `severity` (`info`/`silent`/`notice`/`error`/`critical`), `source` (`parameters`/`files`/`headers`/`cookies`), `export`, `depends`, `provides`, `method`, and `translation_domain`. The `parent` attribute chains a file to the module- or project-level validators, so shared rules live in one place.
+
+The built-in aliases you can compose with are defined in the framework's `validators.xml` — among them `string`, `number`, `email`, `regex`, `datetime`, `inarray`, `isset`, `isnotempty`, `json`, `file`, `imagefile`, and the operator groups `and`/`or`/`not`/`xor`.
+
+## Discovery and compilation
+
+Both paths compile ahead of a request rather than validating interpretively:
+
+- **XML** files matching `Modules/*/Validate/*.xml` are handled by the validator config handler — schema-validated, then compiled and cached like all Quiote config.
+- **PHP** registrars (`{Action}.php`, or a generated `{Action}.generated.php`) are loaded by the action's `registerValidators()` hook via the compiled-validator registry.
+
+Whichever you use, the validators run in `ValidationMiddleware` before your action, ordered by their `depends`/`provides` tokens, and only parameters that have a validator survive the strict-mode whitelist — everything else is pruned from the request. That is why a validator both *checks* a field and *makes it readable*: see [strict parameter access](/basics/requests-and-responses/#strict-parameter-access).

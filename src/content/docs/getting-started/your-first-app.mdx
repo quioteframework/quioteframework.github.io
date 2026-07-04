@@ -1,0 +1,338 @@
+---
+title: Your first application
+description: Build and understand a minimal Quiote application, from the front controller to a rendered template.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+This guide walks through a complete Quiote application: a front controller that boots the framework, one route, one action, one view, and one template. It mirrors the app the CLI scaffolds with `quiote new`, so you can generate it and follow along.
+
+By the end you will understand the path a request takes: **URL → route → action → view → template → response.**
+
+## The shape of an application
+
+A Quiote app is a directory with `Config/`, `Modules/`, `Routing/`, and a public entry point:
+
+```
+app/
+├── Config/
+│   ├── settings.php
+│   ├── factories.yaml
+│   ├── output_types.xml
+│   └── databases.xml
+├── Modules/
+│   └── Default/
+│       ├── Actions/
+│       │   └── IndexAction.php
+│       ├── Views/
+│       │   └── IndexSuccessView.php
+│       └── Templates/
+│           └── IndexSuccess.php
+├── Routing/
+│   └── AppRouting.php
+└── pub/
+    └── index.php
+```
+
+Notice the naming: an action named `Index` in the `Default` module, returning the view name `Success`, resolves to the view class `IndexSuccessView` and the template `IndexSuccess.php`. That convention is the thread that ties the pieces together.
+
+## 1. The front controller
+
+Every request enters through `pub/index.php`. Its whole job is to find the autoloader and start the kernel:
+
+```php
+<?php
+
+// ... autoloader setup ...
+
+Quiote\Runtime\Kernel::create([
+    'app_dir' => dirname(__DIR__),
+    'env'     => getenv('QUIOTE_ENV') ?: 'development',
+    'context' => 'web',
+])->run();
+```
+
+`Kernel::create()` takes an options array:
+
+- `app_dir` — the application root that contains `Config/`, `Modules/`, and so on.
+- `env` — the environment name (`development`, `production`, …). It selects which config overlays apply.
+- `context` — the execution profile. `web` is the HTTP profile.
+
+`run()` boots the framework, then serves requests. Under [FrankenPHP](https://frankenphp.dev/) it runs a persistent worker loop and reuses the booted framework across requests; under a classic SAPI it handles a single request and exits. You write the same code either way — the kernel picks the right worker adapter for you.
+
+## 2. Declaring a route
+
+Routes live in a `Routing` subclass. You build a Symfony `RouteCollection` in a `build()` method and map each route to a module and action via the `_module` / `_action` defaults:
+
+```php
+<?php
+namespace SampleApp\Routing;
+
+use Quiote\Routing\AttributeRoutes;
+use Quiote\Routing\Routing;
+use Symfony\Component\Routing\Route;
+use Symfony\Component\Routing\RouteCollection;
+
+final class AppRouting extends Routing
+{
+    protected function build(): array
+    {
+        $routes = new RouteCollection();
+        $meta = [];
+
+        $routes->add('index', new Route('/', ['_module' => 'Default', '_action' => 'Index']));
+        $meta['index'] = ['gen_path' => '/', 'path' => '/', 'cut' => false];
+
+        // Pull in any routes declared with #[Route] attributes on action classes.
+        AttributeRoutes::mergeInto($routes, $meta);
+
+        return [$routes, $meta];
+    }
+}
+```
+
+The route `/` says: when the path is `/`, dispatch the `Index` action in the `Default` module. Routing is covered in full in [Routing](/basics/routing/), including the fluent `addRoute()` helper and `#[Route]` attributes.
+
+## 3. Writing an action
+
+An action decides *what happens* for a request and returns the **name of a view** — never HTML. Here is the whole `Index` action:
+
+```php
+<?php
+namespace SampleApp\Modules\Default\Actions;
+
+use Quiote\Action\Action;
+use Quiote\Request\WebRequest;
+
+class IndexAction extends Action
+{
+    public function executeRead(WebRequest $rd)
+    {
+        return 'Success';
+    }
+
+    public function getDefaultViewName()
+    {
+        return 'Success';
+    }
+}
+```
+
+Two things to understand:
+
+- **`executeRead` runs for GET requests.** Quiote maps the HTTP verb to a method: `GET` → `executeRead`, `POST` → `executeWrite`, `PUT`/`PATCH` → `executeUpdate`, `DELETE` → `executeRemove`. (You can also name a method after the exact verb — `executeGet`, `executePost` — when you need to.) This is how one action class handles several verbs. See [Actions and views](/architecture/actions-and-views/) for the full mapping.
+- **The return value is a view name, not content.** Returning `'Success'` tells the framework to render the `Success` view for this action. The action never touches the response body.
+
+To pass data to the view, call `setAttribute()`:
+
+```php
+public function executeRead(WebRequest $rd)
+{
+    $this->setAttribute('title', 'Home');
+    return 'Success';
+}
+```
+
+## 4. Writing a view
+
+A view turns the action's result into output for a specific **output type** (HTML, JSON, …). The method that runs depends on the negotiated output type: for HTML, that is `executeHtml()`.
+
+```php
+<?php
+namespace SampleApp\Modules\Default\Views;
+
+use Quiote\Request\WebRequest;
+use Quiote\View\View;
+
+class IndexSuccessView extends View
+{
+    public function executeHtml(WebRequest $rd)
+    {
+        // Load the layout/layers declared in output_types.xml so the
+        // "content" layer's template actually renders.
+        $this->loadLayout();
+        $this->setAttribute('title', 'Home');
+    }
+}
+```
+
+`loadLayout()` reads the layout for the current output type from `output_types.xml` and prepares its layers. Without it, `executeHtml()` returning nothing produces an empty body. Attributes you set here (and attributes the action set) become variables in the template.
+
+The same view can serve multiple output types by defining more methods — `executeJson()`, for example. See [Output types](/basics/output-types-and-content-negotiation/).
+
+## 5. Writing a template
+
+Templates are plain PHP. View and action attributes arrive in a `$template` array:
+
+```php
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title><?php echo htmlspecialchars($template['title'] ?? 'Home', ENT_QUOTES, 'UTF-8'); ?></title>
+</head>
+<body>
+    <h1>It works!</h1>
+</body>
+</html>
+```
+
+`$template['title']` is the `title` attribute set in the view. Templates do escaping themselves — Quiote's default PHP renderer does not auto-escape, in keeping with its unopinionated stance. Rendering and layouts are covered in [Templates and rendering](/basics/templates-and-rendering/).
+
+## 6. Minimal configuration
+
+Four config files make this app runnable. Note that they are in three different formats — Quiote reads all of them, so you can pick per file (see [Configuration](/architecture/configuration/)).
+
+`settings` — application settings. Written here in each of the three formats (pick one file; the app uses PHP):
+
+<Tabs syncKey="config-format">
+<TabItem label="PHP">
+
+```php
+// Config/settings.php
+return [
+    'core.app_name'         => 'SampleApp',
+    'core.namespace_prefix' => 'SampleApp',
+    'core.available'        => true,
+    'core.debug'            => false,
+    'core.use_database'     => false,
+    'core.use_logging'      => true,
+    'core.use_security'     => false,
+    'core.use_translation'  => false,
+    'core.default_context'  => 'web',
+];
+```
+
+</TabItem>
+<TabItem label="YAML">
+
+```yaml
+# Config/settings.yaml
+core.app_name: SampleApp
+core.namespace_prefix: SampleApp
+core.available: true
+core.debug: false
+core.use_database: false
+core.use_logging: true
+core.use_security: false
+core.use_translation: false
+core.default_context: web
+```
+
+</TabItem>
+<TabItem label="XML">
+
+```xml
+<!-- Config/settings.xml -->
+<?xml version="1.0" encoding="UTF-8"?>
+<ae:configurations xmlns:ae="http://quiote.dev/quiote/config/global/envelope/1.1"
+                   xmlns="http://quiote.dev/quiote/config/parts/settings/1.1">
+    <ae:configuration>
+        <settings>
+            <setting name="app_name">SampleApp</setting>
+            <setting name="namespace_prefix">SampleApp</setting>
+            <setting name="available">true</setting>
+            <setting name="debug">false</setting>
+            <setting name="use_database">false</setting>
+            <setting name="use_logging">true</setting>
+            <setting name="use_security">false</setting>
+            <setting name="use_translation">false</setting>
+            <setting name="default_context">web</setting>
+        </settings>
+    </ae:configuration>
+</ae:configurations>
+```
+
+</TabItem>
+</Tabs>
+
+`factories` — which class fills each core role. This is Quiote's equivalent of a service manifest (each role needs a `class`, plus optional constructor `params`):
+
+<Tabs syncKey="config-format">
+<TabItem label="PHP">
+
+```php
+// Config/factories.php
+return [
+    'controller'         => ['class' => \Quiote\Controller\Controller::class,      'params' => []],
+    'response'           => ['class' => \Quiote\Response\WebResponse::class,        'params' => []],
+    'routing'            => ['class' => \SampleApp\Routing\AppRouting::class,       'params' => []],
+    'request'            => ['class' => \Quiote\Request\WebRequest::class,          'params' => []],
+    'storage'            => ['class' => \Quiote\Storage\NullStorage::class,         'params' => []],
+    'user'               => ['class' => \Quiote\User\User::class,                   'params' => []],
+    'database_manager'   => ['class' => \Quiote\Database\DatabaseManager::class,    'params' => []],
+    'validation_manager' => ['class' => \Quiote\Validator\ValidationManager::class, 'params' => []],
+];
+```
+
+</TabItem>
+<TabItem label="YAML">
+
+```yaml
+# Config/factories.yaml
+controller:
+  class: Quiote\Controller\Controller
+  params: []
+response:
+  class: Quiote\Response\WebResponse
+  params: []
+routing:
+  class: SampleApp\Routing\AppRouting
+  params: []
+request:
+  class: Quiote\Request\WebRequest
+  params: []
+storage:
+  class: Quiote\Storage\NullStorage
+  params: []
+user:
+  class: Quiote\User\User
+  params: []
+database_manager:
+  class: Quiote\Database\DatabaseManager
+  params: []
+validation_manager:
+  class: Quiote\Validator\ValidationManager
+  params: []
+```
+
+</TabItem>
+<TabItem label="XML">
+
+```xml
+<!-- Config/factories.xml -->
+<?xml version="1.0" encoding="UTF-8"?>
+<ae:configurations xmlns:ae="http://quiote.dev/quiote/config/global/envelope/1.1"
+                   xmlns="http://quiote.dev/quiote/config/parts/factories/1.1">
+    <ae:configuration>
+        <controller class="Quiote\Controller\Controller"/>
+        <response class="Quiote\Response\WebResponse"/>
+        <routing class="SampleApp\Routing\AppRouting"/>
+        <request class="Quiote\Request\WebRequest"/>
+        <storage class="Quiote\Storage\NullStorage"/>
+        <user class="Quiote\User\User"/>
+        <database_manager class="Quiote\Database\DatabaseManager"/>
+        <validation_manager class="Quiote\Validator\ValidationManager"/>
+    </ae:configuration>
+</ae:configurations>
+```
+
+</TabItem>
+</Tabs>
+
+`output_types` declares the `html` output type, its PHP renderer, and its layout. `Config/databases.xml` declares a database connection (unused here because `core.use_database` is `false`). Both are shown in [Output types](/basics/output-types-and-content-negotiation/) and [Databases](/basics/databases/).
+
+## 7. Run it
+
+Point a web server at `pub/index.php` and request `/`. The kernel boots, `AppRouting` matches `/` to the `Index` action, `executeRead` returns `'Success'`, `IndexSuccessView::executeHtml()` loads the layout and sets `title`, and `IndexSuccess.php` renders. You get HTML back.
+
+## What just happened
+
+The full path, once more, with the moving parts named:
+
+1. The **kernel** boots the framework and builds the [middleware pipeline](/architecture/middleware-pipeline/).
+2. **RoutingMiddleware** matches `/` and resolves it to `Default`/`Index`.
+3. **DispatchMiddleware** runs the action; `executeRead` returns `'Success'`.
+4. The executor resolves `Success` to `IndexSuccessView`, calls `executeHtml()`, and renders the `IndexSuccess` template.
+5. The response is emitted.
+
+To understand that pipeline in depth, continue to [The request lifecycle](/architecture/request-lifecycle/).

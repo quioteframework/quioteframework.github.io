@@ -1,0 +1,133 @@
+---
+title: Plugins and extensibility
+description: The plugin system — one lifecycle that lets a package contribute config, services, middleware, routes, events, commands, and HTTP clients.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+Quiote's core is deliberately [unopinionated](/getting-started/philosophy/). The plugin system is how opinionated, batteries-included behaviour drops in on top of it: a self-contained package contributes to the framework through one `register()` call, and the app opts in by listing it.
+
+A plugin adds **no new low-level mechanism**. Every contribution routes to a seam that already exists — [config](/architecture/configuration/) defaults, [DI](/architecture/container/) services, [middleware](/architecture/middleware-pipeline/), [events](/architecture/events/), routes/modules, commands, and [HTTP clients](/basics/http-client/). The plugin system just wraps those seams in one coherent, discoverable API.
+
+## Writing a plugin
+
+Implement `Quiote\Plugin\PluginInterface` — a name, and a `register()` that receives a `PluginRegistrar`:
+
+```php
+<?php
+namespace App\Plugin;
+
+use Quiote\Plugin\{PluginInterface, PluginRegistrar};
+use Quiote\DI\Container;
+
+final class HealthPlugin implements PluginInterface
+{
+    public function name(): string
+    {
+        return 'health';
+    }
+
+    public function register(PluginRegistrar $r): void
+    {
+        $r->configDefault('health.path', '/healthz')
+          ->attributedMiddleware(\App\Plugin\Health\HealthMiddleware::class)
+          ->service(HealthChecker::class, HealthChecker::class, Container::SCOPE_SINGLETON)
+          ->listen(\Quiote\Event\Lifecycle\KernelBootEvent::class, fn($e) => /* ... */)
+          ->command(\App\Plugin\Health\HealthCommand::class);
+    }
+}
+```
+
+`register()` is called **once at boot**. Each `PluginRegistrar` method is fluent (returns `$this`) and maps to an existing seam:
+
+| Method | Contributes | Routes to |
+|---|---|---|
+| `configDefault($key, $value)` | A config default (set-if-absent) | `Config::set(…, overwrite: false)` |
+| `service($id, $concrete, $scope, ...$aliases)` | A DI service (per container, if not already bound) | `Container::set()` |
+| `middleware($fqcn, $factory, $after, $before, $priority)` | Middleware at a position | `MiddlewareCatalog::register()` |
+| `attributedMiddleware($fqcn)` | An attribute-ordered middleware | `MiddlewareCatalog::registerAttributed()` |
+| `listen($eventClass, $listener, $priority)` | An event listener | `Events::listen()` |
+| `moduleDirectory($dir)` | A module dir for `#[Route]` scanning | route scanner default set |
+| `command($fqcn)` | A console command | console registry |
+| `httpClient($name, $configurator)` | A named HTTP client | `HttpClientFactory::configure()` |
+| `databaseDriver($alias, $adapterClass)` | A database adapter alias | `DatabaseDriverRegistry` (see [Databases](/basics/databases/)) |
+
+## Registering a plugin
+
+Two ways. **Declaratively**, via the `plugins` config key (a list of plugin class-strings):
+
+<Tabs syncKey="config-format">
+<TabItem label="PHP">
+
+```php
+// Config/settings.php
+'plugins' => [
+    \App\Plugin\HealthPlugin::class,
+],
+```
+
+</TabItem>
+<TabItem label="YAML">
+
+```yaml
+# Config/settings.yaml
+plugins:
+  - App\Plugin\HealthPlugin
+```
+
+</TabItem>
+<TabItem label="XML">
+
+```xml
+<!-- Config/settings.xml — prefix="" keeps the key as `plugins`, not `core.plugins` -->
+<settings prefix="">
+  <setting name="plugins">
+    <ae:parameter>App\Plugin\HealthPlugin</ae:parameter>
+  </setting>
+</settings>
+```
+
+</TabItem>
+</Tabs>
+
+`plugins` is a bare (non-`core.`) key, so the XML form needs `prefix=""` on the `<settings>` wrapper (see [Configuration → The XML `prefix` attribute](/architecture/configuration/#the-xml-prefix-attribute)).
+
+Or **programmatically**, before the kernel runs:
+
+```php
+// pub/index.php — before Kernel::run()
+use Quiote\Plugin\PluginManager;
+
+PluginManager::add(App\Plugin\HealthPlugin::class);
+
+Quiote\Runtime\Kernel::create([/* ... */])->run();
+```
+
+Either way, `register()` runs during `Quiote::bootstrap()` — **after settings load, before contexts are created** — in deterministic order (config order, then `add()` order), de-duplicated by class.
+
+## Ordering and override rules
+
+The rules are predictable and exist so a plugin can never silently override your application:
+
+- **App settings load before plugins**, so `configDefault()` is *set-if-absent*: your `settings.*` always win, and a plugin only fills a key you left unset.
+- **Among plugins, first writer wins** for both config defaults and DI services (also set-if-absent). Declared order decides who's first.
+- **DI services** are applied per [container](/architecture/container/) when it's built, and only if the id isn't already bound — app and core bindings win.
+- **Middleware** uses the normal [attribute / catalog ordering](/architecture/middleware-pipeline/) — a plugin's middleware is placed by the same rules as anyone else's, no special precedence.
+
+So the precedence for anything contestable is: **app → first plugin → later plugins → core defaults.**
+
+## Current boundaries
+
+A few contribution kinds work with documented limits (the mechanism is real and tested; these are scoped follow-ups):
+
+- **Module routes** — a plugin's `moduleDirectory()` is scanned for `#[Route]` actions, but action FQCNs are derived from `core.namespace_prefix`, so a plugin's modules are discovered for routing only when they follow that namespace convention. Full multi-root module *resolution* in the controller (independent per-plugin namespaces) is future work — plugin modules are discovered for routing, not yet resolved from arbitrary roots.
+- **Commands** — `bin/quiote` builds its console app *before* bootstrap, so plugin-contributed commands appear once a bootstrap has populated the registry in the same process (e.g. a programmatically constructed `Application` after `Quiote::bootstrap()`). Wiring `bin/quiote` to bootstrap first is a deliberate non-goal for now.
+
+## The enablers
+
+Two of the framework features the plugin system leans on are documented in their own right:
+
+- **[Events](/architecture/events/)** — the lifecycle hooks a plugin listens to (`register()` → `$r->listen(...)`).
+- **[HTTP client](/basics/http-client/)** — named clients a plugin can pre-configure (`$r->httpClient(...)`).
+
+Together these are the backbone of the "unopinionated core, opinionated drop-ins" design: the core stays lean, and anything with an opinion — an auth provider, health checks, a mailer — ships as a plugin you choose to add.

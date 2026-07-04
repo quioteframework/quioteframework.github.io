@@ -1,0 +1,114 @@
+---
+title: Error handling
+description: How exceptions flow through the pipeline, the developer vs safe renderers, and hooking or replacing error output.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+Every exception thrown anywhere in a request is caught in one place: `ErrorHandlingMiddleware`, the outermost middleware in the pipeline. Because it wraps the entire stack, there is a single, predictable path from "something threw" to "a response went out" — no scattered try/catch, no partial output. This page traces that path and shows how to shape or replace what the user sees.
+
+## The flow
+
+`ErrorHandlingMiddleware` sits at the very top of the [pipeline](/architecture/middleware-pipeline/) (phase `bootstrap`, highest priority), so it is the last thing to see the request on the way in and the first to catch anything on the way out. When a `Throwable` escapes the stack it:
+
+1. Logs a dense diagnostic line — exception class, message, `file:line`, request method and URI, allowed methods (for a method-not-allowed error), the `caused by` previous-exception chain, and the trace.
+2. Emits an **`ExceptionCaughtEvent`** carrying the throwable and the request, so listeners can report the error (Sentry, Bugsnag, metrics) uniformly. See [Events](/architecture/events/).
+3. Maps the exception to an HTTP status (below).
+4. Picks a renderer based on `core.developer_exceptions` and returns its response.
+
+The status mapping is intentionally small:
+
+| Exception | Status |
+|---|---|
+| `InvalidArgumentException` | 400 |
+| `DomainException` | 422 |
+| anything else | 500 |
+
+There are **no dedicated HTTP exception classes** (no `NotFoundException` / `ForbiddenException`). A 404 is not exception-driven — an unmatched route is handled by the routing and dispatch middleware returning a 404 response directly, not by throwing. So error handling here is about *unexpected* failures becoming a safe response, not about modelling HTTP status codes as exceptions.
+
+## Developer vs safe rendering
+
+Which renderer runs is decided by a single setting, `core.developer_exceptions`:
+
+<Tabs syncKey="config-format">
+<TabItem label="PHP">
+
+```php
+// Config/settings.php
+return [
+    'core.developer_exceptions' => false,   // true only in development
+];
+```
+
+</TabItem>
+<TabItem label="YAML">
+
+```yaml
+# Config/settings.yaml
+core.developer_exceptions: false
+```
+
+</TabItem>
+<TabItem label="XML">
+
+```xml
+<!-- Config/settings.xml — inside <settings> -->
+<setting name="core.developer_exceptions">false</setting>
+```
+
+</TabItem>
+</Tabs>
+
+- **`false` (production default) → `SafeRenderer`.** Never leaks the class, message, or trace. It content-negotiates on `Accept`: a JSON body (`{error, status, correlation_id}`), a plain-text `Internal error`, or a minimal HTML page. The message is generic — `Internal Server Error` for 5xx, `Request Error` otherwise.
+- **`true` → `WhoopsRenderer`.** The full [Whoops](https://github.com/filp/whoops) developer page — stack trace, source, request data — or its JSON/plain-text handlers depending on `Accept`. It is configured to return markup as a string rather than writing to output, so it is safe under [worker mode](/architecture/deployment/).
+
+Both include the request's correlation id, so an error a user reports can be matched to the log line for it. See [Logging](/architecture/logging/#correlation-ids).
+
+The scaffolded app ships a `/boom` action that throws on purpose — hit it with `core.developer_exceptions` on and off to see the two renderers.
+
+:::caution[Keep `developer_exceptions` off in production]
+The Whoops page exposes source code, environment, and request data. It is a development aid only. The setting defaults to false and is forced to false at bootstrap unless you set it — leave it that way anywhere untrusted.
+:::
+
+:::note[`exception_template` is inert]
+An `exception_template` attribute exists in the output-types config, carried over from Agavi's per-output-type error templates, but the current renderer path does not read it. To customize error output, provide a renderer (below) rather than setting `exception_template`.
+:::
+
+## Customizing error output
+
+There are two seams, depending on whether you want to change *what happens* or *what is shown*.
+
+**To react to an error** — report it, increment a metric, notify — listen for `ExceptionCaughtEvent`. This is the clean place for error reporting because it fires for every caught throwable, before rendering:
+
+```php
+$events->addListener(ExceptionCaughtEvent::class, function (ExceptionCaughtEvent $e) {
+    $this->sentry->captureException($e->exception);
+});
+```
+
+**To change the rendered response**, implement the renderer contract, `Quiote\Exception\Rendering\ExceptionRenderer`:
+
+```php
+namespace App\Error;
+
+use Psr\Http\Message\{ResponseInterface, ServerRequestInterface};
+use Quiote\Exception\Rendering\ExceptionRenderer;
+
+final class BrandedErrorRenderer implements ExceptionRenderer
+{
+    public function render(
+        \Throwable $e,
+        ServerRequestInterface $request,
+        int $status,
+        ?string $correlationId,
+    ): ResponseInterface {
+        // build and return a real PSR-7 response
+    }
+}
+```
+
+A renderer must be worker-safe: no `echo`, no `exit`, no superglobals — build and return a PSR-7 response. You can also subclass `SafeRenderer` or `WhoopsRenderer` to tweak one behaviour rather than starting from scratch. The `render()` method receives the mapped status and the correlation id, so a branded 500 page can still surface the id for support.
+
+## Framework exceptions
+
+The base type is `Quiote\Exception\QuioteException` (extends `\Exception`, and supports string error codes such as PDO SQLSTATEs). The framework throws typed subclasses for its own failure modes — among them `ConfigurationException`, `DatabaseException`, `SecurityException`, `ValidatorException`, `ViewException`, `ClassNotFoundException`, `DisabledModuleException`, and `StorageException`. All flow through the same `ErrorHandlingMiddleware`, so catching one in your own code is optional — anything you don't handle becomes a safe response.

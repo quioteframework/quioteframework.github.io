@@ -1,0 +1,138 @@
+---
+title: Translation and i18n
+description: Translating messages and formatting numbers, currency, and dates with the TranslationManager.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+Quiote's internationalization is built around a `TranslationManager` that handles four kinds of locale-sensitive output: **messages**, **numbers**, **currency**, and **dates**. Each is provided by a *translator* registered per domain, and everything is driven from a single `translation.xml` catalog. It leans on PHP's `intl` extension for the heavy lifting (number/date/currency formatting), so the `intl` extension must be installed (the [Docker image](/architecture/deployment/#docker) installs it).
+
+## Turning translation on
+
+Translation is off by default and gated by one setting. The `translation_manager` is only built — and `getTranslationManager()` only returns non-null — when it is true:
+
+<Tabs syncKey="config-format">
+<TabItem label="PHP">
+
+```php
+// Config/settings.php
+return [
+    'core.use_translation' => true,
+];
+```
+
+</TabItem>
+<TabItem label="YAML">
+
+```yaml
+# Config/settings.yaml
+core.use_translation: true
+```
+
+</TabItem>
+<TabItem label="XML">
+
+```xml
+<!-- Config/settings.xml — inside <settings> -->
+<setting name="core.use_translation">true</setting>
+```
+
+</TabItem>
+</Tabs>
+
+## Using the translation functions
+
+There are no global helper functions — you call the manager, reached from the context:
+
+```php
+$t = $this->getContext()->getTranslationManager();
+```
+
+It exposes four methods, one per output kind. Note the names carefully — the *plural* helper is `__` (double underscore), and `_n` means *number*, not plural:
+
+| Method | Purpose | Example |
+|---|---|---|
+| `_($message, $domain?, $locale?, $params?)` | Translate a message | `$t->_('Welcome')` |
+| `__($singular, $plural, $count, ...)` | Pluralized message | `$t->__('%d file', '%d files', $n)` |
+| `_n($number, $domain?, $locale?)` | Format a number | `$t->_n(1234.5)` |
+| `_c($amount, $domain?, $locale?)` | Format currency | `$t->_c(19.99)` |
+| `_d($date, $domain?, $locale?)` | Format a date/time | `$t->_d($order->placedAt)` |
+
+Message translation accepts positional parameters, applied with `vsprintf`:
+
+```php
+$t->_('Hello, %s — you have %d messages', null, null, [$name, $count]);
+```
+
+The `$domain` argument selects a translation domain; a leading `.` prefixes the default domain (`.errors` → `default.errors`). Domains are hierarchical — a lookup for `default.errors.Login` falls back up to `default.errors`, then `default`, until a translator is found. Passing a `$locale` translates in that locale for one call without changing the current one.
+
+## The translation catalog
+
+Locales and translators are declared in `Config/translation.xml`. Like all Quiote config it is compiled and cached; unlike settings it has a dedicated schema (namespace `.../config/parts/translation/1.1`). It has two sections — available locales, and the translators that do the work:
+
+```xml
+<ae:configurations
+    xmlns:ae="http://quiote.dev/quiote/config/global/envelope/1.1"
+    xmlns="http://quiote.dev/quiote/config/parts/translation/1.1">
+  <ae:configuration>
+
+    <available_locales default_locale="en_US" default_timezone="America/Los_Angeles">
+      <available_locale identifier="en_US" />
+      <available_locale identifier="de_DE" />
+      <available_locale identifier="fi_FI" />
+    </available_locales>
+
+    <translators default_domain="default">
+      <translator domain="default">
+        <!-- messages -->
+        <message_translator class="Quiote\Translation\GettextTranslator">
+          <ae:parameter name="text_domains">
+            <ae:parameter name="default">%core.app_dir%/data/i18n</ae:parameter>
+          </ae:parameter>
+        </message_translator>
+        <!-- numbers / currency / dates -->
+        <number_formatter />
+        <currency_formatter>
+          <ae:parameter name="currency_code">EUR</ae:parameter>
+        </currency_formatter>
+        <date_formatter type="datetime">
+          <ae:parameter name="format">medium</ae:parameter>
+        </date_formatter>
+      </translator>
+    </translators>
+
+  </ae:configuration>
+</ae:configurations>
+```
+
+- `default_locale` and `default_timezone` are attributes on `<available_locales>`.
+- Each `<translator>` can carry a `<message_translator>` plus `<number_formatter>`, `<currency_formatter>`, and `<date_formatter>`. Translators nest, producing hierarchical domains like `default.errors`.
+- When a formatter element is present without a `class`, a sensible default class is used (`QuioteNumberFormatter`, `CurrencyFormatter`, `DateFormatter`). A `<message_translator>` has no default — you name the class.
+
+### Message translators
+
+Two message translators ship:
+
+- **`GettextTranslator`** — reads gettext `.mo` files. Full plural support (it parses the `Plural-Forms` header), so `__()` works. Configure `text_domains` to map each domain to a directory of catalogs.
+- **`SimpleTranslator`** — translations declared inline in config (`params[domain][locale][from] = to`). No plural support — `__()` with this translator throws.
+
+### Formatters
+
+`QuioteNumberFormatter`, `CurrencyFormatter`, and `DateFormatter` wrap `intl`'s `NumberFormatter` and `IntlDateFormatter`. They pick grouping/decimal separators and patterns from the current locale, and accept a `format` parameter (a pattern, a per-locale map, or a named specifier). `DateFormatter` takes `type` (`date` / `time` / `datetime`) and a `format` that can be `full`, `long`, `medium`, or `short`.
+
+## Choosing and switching the locale
+
+The current locale starts at `default_locale` from the catalog. There is **no automatic `Accept-Language` negotiation** — locale selection is explicit. Switch it at runtime:
+
+```php
+$t->setLocale('de_DE');
+$t->getCurrentLocaleIdentifier();   // may be the closest available match
+```
+
+`setLocale()` resolves to the closest available locale, so requesting `de_DE` when only `de` is configured lands on `de`. For a one-off in another locale, pass the locale argument to `_()` / `_d()` / etc. rather than switching globally.
+
+Locale-suffixed templates are also supported: when translation is on, the [template layer](/basics/templates-and-rendering/) looks for a locale variant of a template before the base one, so you can localize whole templates as well as strings.
+
+## Worker-mode note
+
+`TranslationManager` implements the reset contract and clears its cached locale, timezone, and currency state between requests in [worker mode](/architecture/deployment/), so a `setLocale()` in one request doesn't bleed into the next.

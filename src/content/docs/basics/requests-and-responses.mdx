@@ -1,0 +1,163 @@
+---
+title: Requests and responses
+description: The WebRequest and WebResponse API — parameters, cookies, headers, redirects, and forwarded-header handling.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+Every action receives a `WebRequest` and, through the context, can shape a `WebResponse`. `WebRequest` **is** a real PSR-7 `ServerRequestInterface` (it extends Nyholm's `ServerRequest`), so anything that speaks PSR-7 works with it directly; on top of that it adds Quiote's parameter model and convenience getters. `WebResponse` is the framework's response object, which can carry and mirror a PSR-7 response.
+
+## Reading request input
+
+The primary way to read input is `getParameter()`, which merges query and body parameters:
+
+```php
+public function executeWrite(WebRequest $rd)
+{
+    $name  = $rd->getParameter('name');
+    $page  = $rd->getParameter('page', 1);        // default if absent
+    $tags  = $rd->getParameter('tags');           // array params supported
+}
+```
+
+### Strict parameter access
+
+Parameter access is **validated by default**. Asking for a parameter that no validator whitelisted throws `UnvalidatedParameterAccessException` — *unless* you pass a default, in which case the default is returned:
+
+```php
+$rd->getParameter('email');        // throws if 'email' was never validated
+$rd->getParameter('email', null);  // returns null instead of throwing
+```
+
+This is a safety feature, not an obstacle: it means a typo'd or unvalidated field fails loudly instead of silently feeding unchecked input into your action. Declare fields with a validator (see [Input validation](/basics/validation/)) and they become readable; the validator can also *export* a sanitized value that `getParameter()` then returns. To read a value you deliberately did not validate, pass a default.
+
+Related reads:
+
+| Method | Returns |
+|---|---|
+| `hasParameter($name)` | Whether the parameter is present. |
+| `getParameters($source)` | All params from a source: `parameters`, `cookies`, `files`, `headers`, `attributes`, `runtime`. |
+| `getParameter($name, $default)` | A single value, with strict-access behaviour above. |
+
+You can also set parameters at runtime (`setParameter()`), which auto-whitelists them — useful when one middleware or action prepares input for another.
+
+### JSON bodies
+
+For `write`/`update` requests with `Content-Type: application/json`, Quiote decodes the JSON body and mirrors its fields into the parameters automatically, so `getParameter('field')` reads a JSON field the same way it reads a form field. A missing, empty, or invalid JSON body raises an exception rather than silently yielding nothing.
+
+### Cookies, headers, files
+
+```php
+$rd->getCookieParams();                 // all cookies
+$rd->hasCookie('session');
+
+$rd->getHeaderLine('Accept');           // PSR-7 header access
+$rd->hasHeader('Authorization');
+
+$rd->getUploadedFile('avatar');         // first UploadedFileInterface, or null
+$rd->getUploadedFileArray('photos');    // flat list of uploaded files
+```
+
+### URL and method
+
+Beyond the PSR-7 `getMethod()` / `getUri()`, `WebRequest` offers direct getters: `getUrlScheme()`, `getUrlHost()`, `getUrlPort()`, `getUrlPath()`, `getUrlQuery()`, `getUrl()`, and `isHttps()`.
+
+## Shaping the response
+
+Actions usually return a view name and let a [view and template](/basics/templates-and-rendering/) produce the body. When you need to set headers, cookies, a status code, or a redirect directly, reach the response through the controller:
+
+```php
+$response = $this->getContext()->getController()->getResponse();
+```
+
+### Body, status, headers
+
+```php
+$response->setContent($body);
+$response->setContentType('application/pdf');
+$response->setHttpStatusCode(201);
+$response->setHttpHeader('Cache-Control', 'no-store');
+$response->addHttpHeader('Vary', 'Accept');     // append rather than replace
+```
+
+`setHttpStatusCode()` validates the code against the HTTP status table and throws on an invalid one.
+
+### Cookies
+
+```php
+$response->setCookie('prefs', $value, lifetime: 86400, samesite: 'Strict');
+$response->unsetCookie('prefs');
+```
+
+`setCookie()` fills unspecified arguments from the response's cookie defaults, which are secure by default: `HttpOnly` on, `SameSite=Lax`, and `Secure` set automatically when the request is HTTPS. `Path` defaults to `/`.
+
+### Redirects
+
+```php
+$response->setRedirect('/login');        // 302 by default
+$response->setRedirect('/moved', 301);
+return \Quiote\View\View::NONE;          // "I produced the response myself"
+```
+
+When an action handles the response itself — a redirect, a streamed file — return `View::NONE` (`null`) so the framework doesn't also try to render a view. On send, a redirect forces `Content-Length: 0` and sets the `Location` header.
+
+## Forwarded headers and trusted hosts
+
+Behind a reverse proxy or load balancer, the real client scheme, host, and port arrive in headers rather than the connection. Quiote reads them before it builds the request, so `isHttps()`, `getUrlHost()`, and cookie `Secure` reflect the *external* request:
+
+- `X-Forwarded-Proto`, `X-Forwarded-Host`, `X-Forwarded-Port` (and `X-Original-Host`), or
+- the RFC 7239 `Forwarded` header as a fallback.
+
+These correct `$_SERVER` (scheme, host, port) up front so the rest of the framework sees consistent values.
+
+:::caution[Forwarded headers are trusted — put the app behind a proxy that strips them]
+Quiote does not gate forwarded-header parsing on a trusted-proxy allowlist: if a request can reach the application directly, a client can spoof `X-Forwarded-Proto`/`Host`/`Port`. Deploy so that only your proxy can reach the app, and configure the proxy to overwrite (not append to) these headers on inbound requests.
+:::
+
+To defend against Host-header poisoning, set `core.trusted_hosts` — a list of exact hostnames and/or `/regex/` patterns. When set, a request whose Host matches none of them has its Host replaced with the first trusted host:
+
+<Tabs syncKey="config-format">
+<TabItem label="PHP">
+
+```php
+// Config/settings.php
+return [
+    'core.trusted_hosts' => [
+        'example.com',
+        'www.example.com',
+        '/^([a-z0-9-]+\.)?example\.com$/i',
+    ],
+];
+```
+
+</TabItem>
+<TabItem label="YAML">
+
+```yaml
+# Config/settings.yaml
+core.trusted_hosts:
+  - example.com
+  - www.example.com
+  - '/^([a-z0-9-]+\.)?example\.com$/i'
+```
+
+</TabItem>
+<TabItem label="XML">
+
+```xml
+<!-- Config/settings.xml — inside <settings> -->
+<setting name="core.trusted_hosts">
+    <value>example.com</value>
+    <value>www.example.com</value>
+    <value>/^([a-z0-9-]+\.)?example\.com$/i</value>
+</setting>
+```
+
+</TabItem>
+</Tabs>
+
+Leaving `core.trusted_hosts` empty (the default) applies no restriction. Set it in production once your host names are known.
+
+## Worker-mode note
+
+Both `WebRequest` and `WebResponse` implement the framework's reset contract and are cleared between requests in [worker mode](/architecture/deployment/) — the request's runtime parameters and attributes, the response's status, headers, cookies, and redirect all reset to a clean state. The request is rebuilt from the incoming globals every request, so nothing carries over. As with sessions, the takeaway is to read and write through these objects rather than the superglobals, so the reset actually covers your state.

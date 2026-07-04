@@ -1,0 +1,41 @@
+name: Deploy docs to GitHub Pages
+
+on:
+  # Deploy on pushes to the default branch
+  push:
+    branches: [main, master]
+  # Allow manual runs from the Actions tab
+  workflow_dispatch:
+
+# Allow this workflow to publish to GitHub Pages
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Allow one concurrent deployment; skip queued runs in favor of the latest
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Build with Astro
+        uses: withastro/action@v3
+        # Package manager (yarn) and build command are auto-detected from the
+        # lockfile; no `path`/`site` inputs are needed for a root-level site.
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
