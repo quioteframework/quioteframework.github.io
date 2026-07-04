@@ -23,9 +23,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
       - name: Build with Astro
-        uses: withastro/action@v3
+        uses: withastro/action@v6
         # Package manager (yarn) and build command are auto-detected from the
         # lockfile; no `path`/`site` inputs are needed for a root-level site.
 
