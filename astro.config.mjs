@@ -18,6 +18,7 @@ export default defineConfig({
 						{ label: 'Installation', slug: 'getting-started/installation' },
 						{ label: 'Your first application', slug: 'getting-started/your-first-app' },
 						{ label: 'The command-line tool', slug: 'getting-started/cli' },
+						{ label: 'The AI assistant (MCP)', slug: 'getting-started/mcp-assistant' },
 					],
 				},
 				{
@@ -31,11 +32,18 @@ export default defineConfig({
 						{ label: 'Settings reference', slug: 'architecture/settings-reference' },
 						{ label: 'The DI container', slug: 'architecture/container' },
 						{ label: 'Events', slug: 'architecture/events' },
-						{ label: 'Plugins and extensibility', slug: 'architecture/plugins' },
 						{ label: 'Error handling', slug: 'architecture/error-handling' },
 						{ label: 'Logging', slug: 'architecture/logging' },
 						{ label: 'Telemetry', slug: 'architecture/telemetry' },
 						{ label: 'Worker mode & deployment', slug: 'architecture/deployment' },
+					],
+				},
+				{
+					label: 'Plugins',
+					items: [
+						{ label: 'Overview', slug: 'plugins/overview' },
+						{ label: 'Official packages', slug: 'plugins/official-packages' },
+						{ label: 'Writing a plugin', slug: 'architecture/plugins' },
 					],
 				},
 				{

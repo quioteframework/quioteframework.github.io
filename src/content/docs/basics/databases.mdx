@@ -27,7 +27,7 @@ What `getConnection()` returns depends on the adapter:
 | Doctrine ORM | `Doctrine\ORM\EntityManagerInterface` |
 | Doctrine DBAL | `Doctrine\DBAL\Connection` |
 | Cycle ORM | `Cycle\ORM\ORMInterface` |
-| Propulsion | Propulsion runtime service container |
+| Propulsion | `Propulsion\Connection\PropulsionPDO` |
 
 The wrapper stays in front so the framework can manage the connection across a long-lived worker's requests. Each ORM adapter also exposes **typed accessors** (`getEntityManager()`, `getCapsule()`, `getOrm()`, …) for IDE completion — see each section.
 
@@ -130,6 +130,7 @@ Two steps: install the library (see [Installing the libraries](#installing-the-l
     \Quiote\Database\Adapter\Doctrine\DoctrinePlugin::class,
     \Quiote\Database\Adapter\Eloquent\EloquentPlugin::class,
     \Quiote\Database\Adapter\Cycle\CyclePlugin::class,
+    \Quiote\Database\Adapter\Propulsion\PropulsionPlugin::class,
 ],
 ```
 
@@ -142,6 +143,7 @@ plugins:
   - Quiote\Database\Adapter\Doctrine\DoctrinePlugin
   - Quiote\Database\Adapter\Eloquent\EloquentPlugin
   - Quiote\Database\Adapter\Cycle\CyclePlugin
+  - Quiote\Database\Adapter\Propulsion\PropulsionPlugin
 ```
 
 </TabItem>
@@ -154,6 +156,7 @@ plugins:
     <ae:parameter>Quiote\Database\Adapter\Doctrine\DoctrinePlugin</ae:parameter>
     <ae:parameter>Quiote\Database\Adapter\Eloquent\EloquentPlugin</ae:parameter>
     <ae:parameter>Quiote\Database\Adapter\Cycle\CyclePlugin</ae:parameter>
+    <ae:parameter>Quiote\Database\Adapter\Propulsion\PropulsionPlugin</ae:parameter>
   </setting>
 </settings>
 ```
@@ -433,22 +436,19 @@ $repo = $db->getRepository('user');         // Cycle\ORM\RepositoryInterface
 
 ## Propulsion
 
-:::caution[Forthcoming]
-Propulsion is a PHP 8.5 rewrite of Propel; its adapter ships after the others. The alias, parameters, and accessors below follow Propel's runtime model and the conventions of the adapters above — treat them as provisional until the adapter lands.
-:::
+`class="propulsion"` → `Quiote\Database\Adapter\Propulsion\PropulsionDatabase`. Requires the [`quioteframework/propulsion`](https://github.com/quioteframework/propulsion) runtime + `quioteframework/db-propulsion`'s `PropulsionPlugin`. `getConnection()` returns a `Propulsion\Connection\PropulsionPDO`.
 
-`class="propulsion"` → `PropulsionDatabase`. Requires the Propulsion runtime + `PropulsionPlugin`. `getConnection()` returns the Propulsion runtime service container.
+Propulsion is a PHP 8.5, Propel-style ORM: **code-generated**, like Cycle's schema. You author a schema, run `bin/propulsion model:build` to generate Object Model and Query classes ahead of time, autoload them via Composer, and the adapter wires the runtime connection those classes use.
 
-Like classic Propel, Propulsion is **code-generated**: you compile model and query classes from a schema ahead of time (a build/console concern) and autoload them via Composer; the adapter wires the runtime connection those classes use. Supply generated, cached classes rather than regenerating on every boot — the same posture as Cycle's schema.
+Unlike the other adapters, Propulsion owns its **own connection factory** — there's no inline DSN/credentials and no layer mode. You point it at a Propulsion runtime config file instead:
 
 | Parameter | Default | Description |
 |---|---|---|
-| `connection` | — | Name of another database to borrow a PDO from (layer mode), or an inline params array. |
-| `adapter` | — | `mysql` \| `pgsql` \| `sqlite` \| `sqlsrv` \| `oracle` (required unless via `connection`) |
-| `dsn` | — | PDO DSN |
-| `user` / `username`, `password` | — | Credentials |
-| `datasource` | `default` | Datasource name the generated classes bind to |
-| `settings` | `[]` | Runtime connection settings (charset, attributes, on-connect queries) |
+| `config` | — | Path to a Propulsion runtime config file (a PHP file returning an array). **Required.** |
+| `datasource` | resolved from `config` | Which datasource in the config file to use. |
+| `overrides` | `[]` | Key/value pairs applied to the `PropulsionConfiguration` after it loads. |
+| `init_queries` | `[]` | Extra on-connect queries, appended to the datasource's connection settings. |
+| `enable_instance_pooling` | — | Boolean; forces `Propulsion::enableInstancePooling()` / `disableInstancePooling()`. |
 
 <Tabs syncKey="config-format">
 <TabItem label="PHP">
@@ -457,10 +457,8 @@ Like classic Propel, Propulsion is **code-generated**: you compile model and que
 'main' => [
     'class'      => 'propulsion',
     'parameters' => [
-        'adapter' => 'pgsql',
-        'dsn'     => 'pgsql:host=localhost;dbname=app',
-        'user'    => 'app',
-        'password' => 'secret',
+        'config'     => __DIR__ . '/propulsion-runtime.php',
+        'datasource' => 'main',
     ],
 ],
 ```
@@ -472,10 +470,8 @@ Like classic Propel, Propulsion is **code-generated**: you compile model and que
 main:
   class: propulsion
   parameters:
-    adapter: pgsql
-    dsn: 'pgsql:host=localhost;dbname=app'
-    user: app
-    password: secret
+    config: /path/to/propulsion-runtime.php
+    datasource: main
 ```
 
 </TabItem>
@@ -483,26 +479,57 @@ main:
 
 ```xml
 <database name="main" class="propulsion">
-  <ae:parameter name="adapter">pgsql</ae:parameter>
-  <ae:parameter name="dsn">pgsql:host=localhost;dbname=app</ae:parameter>
-  <ae:parameter name="user">app</ae:parameter>
-  <ae:parameter name="password">secret</ae:parameter>
+  <ae:parameter name="config">/path/to/propulsion-runtime.php</ae:parameter>
+  <ae:parameter name="datasource">main</ae:parameter>
 </database>
 ```
 
 </TabItem>
 </Tabs>
 
+The runtime config file is Propulsion's own format — a plain PHP array naming each datasource's adapter and connection:
+
+```php
+<?php
+// propulsion-runtime.php
+return [
+    'datasources' => [
+        'default' => 'main',
+        'main'    => [
+            'adapter'    => 'pgsql',
+            'connection' => [
+                'dsn'      => 'pgsql:host=localhost;dbname=app',
+                'user'     => 'app',
+                'password' => 'secret',
+            ],
+        ],
+    ],
+];
+```
+
 ```php
 /** @var Quiote\Database\Adapter\Propulsion\PropulsionDatabase $db */
-$sc   = $db->getServiceContainer();     // Propulsion runtime service container
-$conn = $db->getPropelConnection();     // ConnectionInterface (wraps the PDO)
+$conn = $db->getPropulsionConnection();   // Propulsion\Connection\PropulsionPDO
+$ds   = $db->getDatasource();             // string, e.g. 'main'
 
 // Generated query + model classes (autoloaded via Composer):
 $books = \App\Model\BookQuery::create()->filterByPublished(true)->find();
 ```
 
-Propel-style ORMs keep an **instance pool** per model; the adapter clears it at the worker request boundary so identity state never leaks between requests, while the connection is kept and recycled like every other adapter.
+Propel-style ORMs keep an **instance pool** per model; `reset()` clears it (via `Propulsion::getSession()->reset()`) at the worker request boundary so identity state never leaks between requests, while the connection is kept and recycled like every other adapter. Process-wide state (the service container) and per-request state (the session) are separate — reached via the `Propulsion` facade's own `getServiceContainer()`/`getSession()`, not through the Quiote adapter.
+
+### Generating model classes
+
+Author a schema and run the Propulsion CLI (ships with the `quioteframework/propulsion` runtime, independent of `bin/quiote`) to generate the model:
+
+```bash
+php bin/propulsion model:build schema.xml \
+    --output-dir=src/Model \
+    --target-platform=php84 \
+    --database=pgsql
+```
+
+Treat generated classes like Cycle's compiled schema: commit or cache them, and regenerate deliberately rather than on every boot. PostgreSQL is Propulsion's default/recommended target; MySQL, SQLite, Oracle, and MSSQL are also supported.
 
 ## Layer mode vs standalone mode
 
@@ -517,7 +544,7 @@ ORM adapters resolve their connection two ways:
 | Doctrine DBAL | ✅ via inline params (DBAL 4 can't wrap a raw PDO) |
 | Doctrine ORM | ✅ but only against a `doctrine_dbal` database, not a raw `pdo` |
 | Cycle | Uses its own `cycle` driver config |
-| Propulsion | ✅ borrows the referenced PDO (`adapter` still required) |
+| Propulsion | Uses its own `config` runtime file — no layer mode |
 
 ## Using a connection in application code
 
@@ -549,13 +576,13 @@ The rule: **expensive, stateless artifacts survive across requests** (connection
 
 ## Installing the libraries
 
-The ORM libraries are optional (`suggest`, not `require`). The adapter classes load fine without them and only fail — with an actionable message — when you actually connect.
+Each ORM adapter lives in its own optional [package](/plugins/official-packages/#database-adapters) that carries the underlying library — a bare install pulls none of them. Install the package for the ORM you want (then register its plugin, above):
 
 ```bash
-composer require illuminate/database        # Eloquent
-composer require doctrine/orm doctrine/dbal # Doctrine ORM (+ DBAL)
-composer require doctrine/dbal              # Doctrine DBAL only
-composer require cycle/orm cycle/database   # Cycle
+composer require quioteframework/db-eloquent    # Eloquent   (illuminate/database)
+composer require quioteframework/db-doctrine    # Doctrine ORM + DBAL
+composer require quioteframework/db-cycle       # Cycle      (cycle/orm + cycle/database)
+composer require quioteframework/db-propulsion  # Propulsion (quioteframework/propulsion runtime)
 ```
 
 You also need the PDO driver for your database compiled into PHP (`pdo_pgsql`, `pdo_mysql`, `pdo_sqlite`, …). The database *servers* aren't needed locally for tests (see below); only the client drivers.

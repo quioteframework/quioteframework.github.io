@@ -1,0 +1,281 @@
+---
+title: The AI assistant (MCP server)
+description: The Quiote Assistant MCP — an MCP server that gives AI coding agents authoritative knowledge of the framework, plus reflection, project introspection, and scaffolding tools.
+---
+
+import { Tabs, TabItem, Aside, Steps } from '@astrojs/starlight/components';
+
+The **Quiote Assistant MCP** is a [Model Context Protocol](https://modelcontextprotocol.io) server that gives an AI coding agent — Claude Code, Cursor, Copilot, or any MCP-capable client — authoritative, current knowledge of the Quiote framework, and, when pointed at a real app, the ability to inspect and scaffold it. Instead of relying on whatever a model happened to memorise (and Quiote is far too new and niche for that), the agent reads the real docs, searches them, reflects on the actual framework source, and can introspect or extend the project it's working in.
+
+It is, itself, **a Quiote application**. It dogfoods the framework's own [app-as-MCP-server capability](/plugins/official-packages/#quioteframeworkmcp) — the same `Quiote\Mcp\McpPlugin` any Quiote app can turn on — so the assistant is both a useful tool and the reference example of building an MCP server with Quiote.
+
+<Aside type="caution" title="Pre-alpha">
+The assistant's capability surface has grown quickly and its shape can still change. It has no independent version scheme yet (`mcp.server_version` is still `0.1.0` despite everything below), and it isn't published anywhere — you run it from a checkout.
+</Aside>
+
+## What it exposes
+
+### Resources — the docs, one URI each
+
+Every page of this documentation site is bundled as an MCP **resource** under a `quiote-docs://` URI (40 at last sync), readable with the standard `resources/read` call:
+
+```
+quiote-docs://basics/routing
+quiote-docs://architecture/plugins
+quiote-docs://getting-started/your-first-app
+…
+```
+
+The agent can list them and read any page verbatim as `text/markdown`, so answers are grounded in — and can cite — the authoritative source rather than a paraphrase.
+
+### Knowledge tools — always available
+
+Five tools work with no target app at all; they answer questions about the framework itself.
+
+<Tabs>
+<TabItem label="search_docs">
+
+`search_docs(query, limit?)` — a ranked full-text search across the whole documentation set. Returns scored excerpts, each with the `quiote-docs://` URI to read in full and cite. `limit` is optional (default 5, max 20).
+
+```jsonc
+// search_docs({ "query": "define a route", "limit": 3 })
+{
+  "query": "define a route", "count": 3,
+  "results": [
+    { "uri": "quiote-docs://basics/routing", "title": "Routing", "score": 85,
+      "excerpt": "# Routing > Declaring routes with a Routing subclass and with #[Route] attributes…" }
+  ]
+}
+```
+
+</TabItem>
+<TabItem label="get_convention">
+
+`get_convention(topic)` — a concise, task-oriented **convention card**: the crisp, hand-authored notes the prose docs don't always state in one place. Topics: `actions`, `routing`, `config`, `di`, `plugins`, `database`, `validation`, `mcp`.
+
+```jsonc
+// get_convention({ "topic": "actions" })
+{ "topic": "actions", "title": "Actions & the verb model",
+  "body": "An action is one class per action, extending `Quiote\\Action\\Action`…" }
+```
+
+</TabItem>
+<TabItem label="get_recipe">
+
+`get_recipe(task)` — step-by-step instructions **with runnable code** for a concrete task, rather than a convention summary. `task` is an enum: `read-only-action`, `multi-output-view`, `form-action`, `add-plugin`, `add-database-connection`, `expose-action-as-tool`, `register-mcp-tool`.
+
+```jsonc
+// get_recipe({ "task": "add-plugin" })
+{
+  "task": "add-plugin", "title": "Write and register a plugin",
+  "steps": [
+    { "description": "Implement PluginInterface -- a name() and a register()...",
+      "code": "final class HealthPlugin implements PluginInterface { ... }" },
+    { "description": "Add the class to the plugins list in Config/settings.php...",
+      "code": "'plugins' => [ \\App\\Plugin\\HealthPlugin::class ]," }
+  ]
+}
+```
+
+</TabItem>
+<TabItem label="describe_symbol">
+
+`describe_symbol(symbol)` — a **reflection-based** signature and docblock for a real `Quiote\*` class, interface, trait, or enum (optionally `Class::method` for one method), so the answer never drifts from the installed code. Rejects anything outside the `Quiote\` namespace.
+
+```jsonc
+// describe_symbol({ "symbol": "Quiote\\Action\\Action::getCredentials" })
+{
+  "symbol": "Quiote\\Action\\Action::getCredentials",
+  "fqcn": "Quiote\\Action\\Action",
+  "method": {
+    "name": "getCredentials", "static": false, "abstract": false, "returnType": null,
+    "parameters": [], "summary": "Retrieve the credential required to access this action.",
+    "attributes": []
+  }
+}
+```
+
+</TabItem>
+<TabItem label="list_api">
+
+`list_api(namespace?, limit?)` — browse the `Quiote\*` namespace tree. Called with no arguments it lists top-level namespaces; called with one of those, it lists that namespace's classes (each with a one-line summary), ready to feed into `describe_symbol` for full detail. `limit` defaults to 50, max 200.
+
+```jsonc
+// list_api({ "namespace": "Quiote\\Mcp", "limit": 2 })
+{
+  "namespace": "Quiote\\Mcp", "total": 14, "count": 2, "truncated": true,
+  "classes": [
+    { "fqcn": "Quiote\\Mcp\\Auth\\McpAuthenticatorInterface", "kind": "interface",
+      "summary": "Validates the bearer token presented to the MCP HTTP endpoint…" },
+    { "fqcn": "Quiote\\Mcp\\Bridge\\ActionToolAdapter", "kind": "class",
+      "summary": "The actions-as-tools bridge (the headline feature)…" }
+  ]
+}
+```
+
+</TabItem>
+</Tabs>
+
+Both `describe_symbol` and `list_api` are backed by real `ReflectionClass`/`ReflectionMethod` introspection against the actually-installed framework code (found by reading Composer's own PSR-4 prefix map, not a hardcoded list) — not generated or static content. If the framework changes, these answers change with it.
+
+### Project-aware tools — when launched against a real app
+
+Launch the assistant with `--target-app-dir=/path/to/your/app` and twelve more tools appear, letting the agent inspect and extend *that* app rather than just answer questions about the framework in the abstract.
+
+**Read-only introspection:**
+
+| Tool | Returns |
+|---|---|
+| `project_info` | Basic app identity — name, namespace prefix, environment. |
+| `list_routes` | The app's declared routes. |
+| `describe_action` | Details of one action — verbs, validators, view. |
+| `list_db_connections` | Configured `databases` connections and their adapter. |
+| `list_plugins` | Plugins registered in `Config/settings.php`. |
+| `list_modules` | Modules under the app's module directories. |
+| `read_config` | A single, **allowlisted** settings key (secrets like `mcp.auth_token` are refused, with the allowlist returned instead). |
+
+**Scaffolding (write) tools** — `scaffold_module`, `scaffold_action`, `scaffold_plugin`, `scaffold_db_connection` generate real files in the target app; `run_console` invokes a `bin/quiote` console command. All default to **`dry_run: true`** and never overwrite an existing file — the agent (or you) has to explicitly opt into writing.
+
+### Prompts — scaffolding recipes
+
+Parameterized **prompt** templates that stitch the right convention card together with a step-by-step recipe, so the agent starts a task with the correct conventions already in hand:
+
+| Prompt | Guides the agent through… |
+|---|---|
+| `new-module` | Adding a new module to an app |
+| `add-action` | Adding an action (verbs, validators, view) to a module |
+| `add-service` | Adding a DI-resolved service or model |
+| `add-plugin` | Writing a plugin that contributes via `PluginRegistrar` |
+| `add-db-connection` | Declaring a new database connection |
+| `expose-mcp-tool` | Exposing an existing `#[Route]` action as an MCP tool |
+
+## Installing and running it
+
+The server is a standalone Quiote app (PHP 8.5+). It lives in its own repository and supports two transports plus a self-contained binary.
+
+<Steps>
+
+1. Install its dependencies:
+
+   ```bash
+   cd quiote-mcp-assistant
+   composer install
+   ```
+
+2. Bundle the docs into MCP resources. The docs are **generated**, not hand-maintained — this command reads a Starlight docs checkout, strips the component markup, and writes the resource files plus their manifest:
+
+   ```bash
+   php bin/quiote-assistant mcp:docs:sync \
+     --source=/path/to/quioteframework.github.io/src/content/docs
+   ```
+
+3. Serve it. Over **stdio** (what a client launches as a subprocess):
+
+   ```bash
+   php bin/quiote-assistant
+   ```
+
+   Point it at a real app to get the project-aware tools:
+
+   ```bash
+   php bin/quiote-assistant --target-app-dir=/path/to/your/app
+   ```
+
+</Steps>
+
+### HTTP transport
+
+The assistant can also serve **Streamable HTTP** instead of (or alongside) stdio, useful for a shared/remote deployment rather than one subprocess per client. It speaks sessions (`Mcp-Session-Id`) and bearer auth (`mcp.auth_token`) — see the project's own `README.md` for the endpoint shape and how to configure it.
+
+### A standalone PHAR
+
+`bin/build-phar` packages the assistant into a single `build/quiote-assistant.phar`, so a client can be pointed at one file instead of a checkout plus `composer install`.
+
+### Registering with a client
+
+Point your MCP client at the launcher. For a project-scoped Claude Code config (`.mcp.json`), or the `mcpServers` block any MCP client understands:
+
+```jsonc
+{
+  "mcpServers": {
+    "quiote": {
+      "command": "php",
+      "args": [
+        "/abs/path/to/quiote-mcp-assistant/bin/quiote-assistant",
+        "--target-app-dir=/abs/path/to/your/app"
+      ]
+    }
+  }
+}
+```
+
+Omit `--target-app-dir` if you only want the knowledge tools. Once registered, tools appear to the agent namespaced by the client (e.g. `mcp__quiote__describe_symbol`), the docs as readable resources, and the recipes as prompts.
+
+## How it's built
+
+This is the part worth studying if you're building your own MCP server on Quiote — the assistant is deliberately a plain app with nothing special about it.
+
+**It's turned on by two settings.** `mcp.enabled = true`, plus both `Quiote\Mcp\McpPlugin` (which publishes the `mcp.*` settings and registers the `mcp:serve` transport) and the app's own `AssistantPlugin` listed in the `plugins` config key:
+
+```php
+// app/Config/settings.php
+'plugins' => [
+    \Quiote\Mcp\McpPlugin::class,
+    \QuioteMcpAssistant\Mcp\AssistantPlugin::class,
+],
+
+'mcp.enabled'    => true,
+'mcp.transports' => ['stdio', 'http'],
+'mcp.server_name' => 'quiote-assistant',
+```
+
+**Every capability is registered manually**, directly against `Quiote\Mcp\McpCatalog`. There's no attribute discovery for plain handler classes (only `#[Route]` actions carrying `#[McpTool]` are scanned) — and note that `PluginRegistrar::mcpTool()`/`mcpResource()`/`mcpPrompt()` convenience methods, which used to be the documented seam here, have since been **removed from the framework core**. `AssistantPlugin` now reproduces that convenience itself with small private wrapper methods that call `McpCatalog::addTool()`/`addResource()`/`addPrompt()` directly:
+
+```php
+public function register(PluginRegistrar $registrar): void
+{
+    // …one addResource() per bundled doc, from the generated manifest…
+    $this->addResource(
+        uri: 'quiote-docs://basics/routing',
+        handler: [DocsResource::class, 'read'],
+        name: 'basics_routing',
+        description: 'Routing — Declaring routes…',
+        mimeType: 'text/markdown',
+    );
+
+    $this->addTool(
+        name: 'describe_symbol',
+        handler: [DescribeSymbolTool::class, 'describe'],
+        description: 'Reflection-based signature + docblock for a Quiote framework symbol…',
+        inputSchema: [/* JSON Schema for { symbol } */],
+    );
+}
+```
+
+If you're writing your own MCP-serving plugin today, go straight to `McpCatalog` rather than looking for a `PluginRegistrar` method — see [Plugins and extensibility](/architecture/plugins/) for the rest of the seams that *are* still on `PluginRegistrar`.
+
+<Aside type="tip" title="Exposing your own app over MCP">
+Add `Quiote\Mcp\McpPlugin` to `plugins`, set `mcp.enabled = true`, and register handlers against `McpCatalog` in your own plugin — or expose an existing `#[Route]` action as a tool by adding `#[McpTool]` to it and setting `mcp.expose_actions = true`.
+</Aside>
+
+## Keeping the docs current
+
+Because the resources are generated by `mcp:docs:sync`, the assistant's knowledge is only as fresh as the last sync. **Re-run it whenever this documentation changes** — it re-reads the Starlight source, re-strips the component markup, and rewrites the bundled resources and their manifest:
+
+```bash
+php bin/quiote-assistant mcp:docs:sync --source=/path/to/quioteframework.github.io/src/content/docs
+```
+
+If the sync has never been run, the server still boots — it simply exposes no doc resources (the tools and prompts still work) rather than failing.
+
+## Verifying it works
+
+The repo ships three real MCP client smoke tests, each launching the server as a real subprocess (or over HTTP) and driving a full JSON-RPC conversation:
+
+```bash
+php tools/mcp-smoke-client.php          # stdio: full read-only surface, self-targeted at app/
+php tools/mcp-smoke-client-phase4.php   # scaffolding writes + run_console, against a throwaway app
+php tools/mcp-http-smoke-client.php     # HTTP transport: sessions + bearer auth
+```
+
+Run them before pointing an agent at the server — they cover every tool, resource, and prompt, plus the project-aware and scaffolding tools against a real (if disposable) app.

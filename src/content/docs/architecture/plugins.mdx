@@ -3,11 +3,15 @@ title: Plugins and extensibility
 description: The plugin system — one lifecycle that lets a package contribute config, services, middleware, routes, events, commands, and HTTP clients.
 ---
 
-import { Tabs, TabItem } from '@astrojs/starlight/components';
+import { Tabs, TabItem, Aside } from '@astrojs/starlight/components';
 
 Quiote's core is deliberately [unopinionated](/getting-started/philosophy/). The plugin system is how opinionated, batteries-included behaviour drops in on top of it: a self-contained package contributes to the framework through one `register()` call, and the app opts in by listing it.
 
 A plugin adds **no new low-level mechanism**. Every contribution routes to a seam that already exists — [config](/architecture/configuration/) defaults, [DI](/architecture/container/) services, [middleware](/architecture/middleware-pipeline/), [events](/architecture/events/), routes/modules, commands, and [HTTP clients](/basics/http-client/). The plugin system just wraps those seams in one coherent, discoverable API.
+
+<Aside type="tip" title="This is how the framework itself is built">
+Plugins aren't just for your code — **many subsystems have been extracted from the kernel into their own `quioteframework/*` packages** (CSRF, rate limiting, the Whoops error page, the MCP server, OpenTelemetry, the telemetry dashboard, the Eloquent / Doctrine / Cycle / Propulsion adapters, template renderers, and session backends). Most ship a plugin like the ones described here; a few plug into a config-driven registry instead (renderers, database aliases). This page covers the mechanism and how to write your own; for the extracted packages and how to install them, see the [Plugins overview](/plugins/overview/) and [Official packages](/plugins/official-packages/).
+</Aside>
 
 ## Writing a plugin
 

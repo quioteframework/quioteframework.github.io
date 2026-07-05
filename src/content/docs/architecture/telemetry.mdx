@@ -9,13 +9,20 @@ Quiote ships OpenTelemetry-based **distributed tracing and metrics**. When enabl
 
 It is **off by default** and built to be invisible when off: instrumentation call sites resolve to shared no-op handles, so they cost nothing and need no changes when you turn telemetry on.
 
-:::note[Optional dependency]
-The `open-telemetry/*` packages are not bundled. They're declared under `require-dev` and `suggest`; a production `composer install` without `--dev` pulls none of them. Every OTel call site is guarded, so their absence is a supported state. To use telemetry in production, `composer require` the OpenTelemetry SDK (and, for the OTLP exporter, a PSR-18 HTTP client).
+:::note[Optional package]
+Telemetry lives outside the kernel, in the optional **[`quioteframework/telemetry-otel`](/plugins/official-packages/#quioteframeworktelemetry-otel)** package (it carries the `open-telemetry/*` SDK). A bare install pulls none of it, and every OTel call site is guarded — the always-on `Trace` facade stays in the core as a no-op — so its absence is a fully supported state. To use telemetry, `composer require quioteframework/telemetry-otel` (and, for the OTLP exporter, a PSR-18 HTTP client). For local inspection, the companion **[`quioteframework/telemetry-dashboard`](/plugins/official-packages/#quioteframeworktelemetry-dashboard)** package adds a `telemetry:dashboard` terminal UI that receives OTLP directly.
 :::
 
 ## Enabling it
 
-Set `telemetry.enabled` and pick an exporter:
+Install the [`quioteframework/telemetry-otel`](/plugins/official-packages/#quioteframeworktelemetry-otel) package and register its plugin, then set `telemetry.enabled` and pick an exporter. Registering the plugin is what wires telemetry in — it's fully opt-in:
+
+```php
+// Config/settings.php
+'plugins' => [ \Quiote\Telemetry\TelemetryPlugin::class ],
+```
+
+Then, in each config format:
 
 <Tabs syncKey="config-format">
 <TabItem label="PHP">

@@ -1,0 +1,219 @@
+---
+title: Official packages
+description: The quioteframework/* packages extracted from the kernel — what each provides, what it depends on, and how to install and enable it.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+A growing set of subsystems that once lived in the core — or that a batteries-included framework would bake in — now ship as their own `quioteframework/*` packages. Each is optional: install it only when you need it, and the dependency it carries stays out of a bare install. This page is the catalogue — for the model behind it, read [Plugins overview](/plugins/overview/) first.
+
+All of these packages are **MIT-licensed** (the kernel itself is LGPL-2.1+); an MIT package depending on the LGPL kernel is a standard, sound arrangement.
+
+<Aside type="caution" title="Pre-alpha">
+Each package lives in its own `github.com/quioteframework/*` repository, but none is **published to Packagist** yet. Until then, install them by adding a VCS repository and requiring `dev-main` — see the [pre-alpha note in the overview](/plugins/overview/#enabling-a-package). The plain `composer require` lines below describe the eventual Packagist experience.
+</Aside>
+
+## At a glance
+
+| Package | Provides | Carries |
+|---|---|---|
+| `quioteframework/csrf` | CSRF token injection + validation | `symfony/security-csrf` |
+| `quioteframework/ratelimit` | Login throttling / rate limiting | `symfony/rate-limiter` |
+| `quioteframework/whoops` | The developer exception page | `filp/whoops` |
+| `quioteframework/mcp` | Expose the app as an MCP server | `mcp/sdk` |
+| `quioteframework/telemetry-otel` | OpenTelemetry tracing + metrics export | `open-telemetry/*` |
+| `quioteframework/telemetry-dashboard` | A terminal OTLP dashboard (`telemetry:dashboard`) | `symfony/tui` |
+| `quioteframework/db-eloquent` | Eloquent database adapter | `illuminate/database` |
+| `quioteframework/db-doctrine` | Doctrine ORM + DBAL adapters | `doctrine/orm`, `doctrine/dbal` |
+| `quioteframework/db-cycle` | Cycle ORM adapter | `cycle/orm`, `cycle/database` |
+| `quioteframework/db-propulsion` | Propulsion (Propel-style) ORM adapter | `quioteframework/propulsion` |
+| `quioteframework/phptal` | PHPTAL template renderer | `phptal/phptal` |
+| `quioteframework/xslt` | XSLT template renderer | `ext-xsl` |
+| `quioteframework/twig` | Twig template renderer | `twig/twig` |
+| `quioteframework/session-pdo` | Database-backed session storage | — |
+| `quioteframework/session-azure` | Azure Blob / Table session storage | — |
+| `quioteframework/session-s3` | S3 (and S3-compatible) session storage | — |
+| `quioteframework/session-gcs` | Google Cloud Storage session storage | — |
+
+## Security & web
+
+### `quioteframework/csrf`
+
+CSRF protection: `CsrfInjectionMiddleware` adds a hidden token field to non-GET HTML forms, a `<meta name="csrf-token">` tag, and a readable `XSRF-TOKEN` cookie; `CsrfValidationMiddleware` rejects unsafe-method requests without a valid token with a 403. Both are placed in the pipeline by `Quiote\Security\Csrf\CsrfPlugin`.
+
+Unlike every other package here, **this one is not opt-in.** `quioteframework/csrf` is a *required* dependency of the kernel, and the kernel registers `CsrfPlugin` automatically at boot — so a fresh app is CSRF-protected without any `plugins` entry, and there's nothing to install:
+
+```php
+// Disabling it takes conscious effort (and logs a warning):
+'core.csrf.enabled' => false,
+```
+
+Configure it with the `core.csrf.*` settings and opt individual routes out with an `_csrf => false` route default rather than disabling protection wholesale. See [Authentication & authorization → CSRF](/advanced/authentication-authorization/#csrf-protection) and the [Middleware reference](/architecture/middleware-reference/#csrfvalidationmiddleware).
+
+### `quioteframework/ratelimit`
+
+Rate-limiting building blocks — `Quiote\Security\RateLimit\LoginThrottle` for slowing or blocking repeated failed logins, with pluggable storage (e.g. `PdoRateLimiterStorage`). This package is a **library, not a plugin**: there's nothing to add to `plugins`; you wire the throttle into your login action yourself.
+
+```bash
+composer require quioteframework/ratelimit
+```
+
+See [Authentication & authorization → Login rate limiting](/advanced/authentication-authorization/#login-rate-limiting).
+
+## Developer experience
+
+### `quioteframework/whoops`
+
+The rich developer exception page — full stack trace, source, and request data — used when `core.developer_exceptions` is on. `Quiote\Exception\Rendering\Whoops\WhoopsPlugin` registers it into the kernel's exception-renderer registry. Fully opt-in: without the plugin (or the package), error handling uses the safe renderer.
+
+```bash
+composer require quioteframework/whoops
+```
+```php
+'plugins' => [ \Quiote\Exception\Rendering\Whoops\WhoopsPlugin::class ],
+```
+
+Keep `core.developer_exceptions` **off** in production regardless — the page exposes source and environment. See [Error handling → Developer vs safe rendering](/architecture/error-handling/#developer-vs-safe-rendering).
+
+### `quioteframework/mcp`
+
+Turns a Quiote app into a [Model Context Protocol](https://modelcontextprotocol.io) server — expose tools, resources, and prompts (or existing `#[Route]` actions) to AI agents over stdio or streamable HTTP.
+
+```bash
+composer require quioteframework/mcp
+```
+
+Enable the plugin and switch MCP on:
+
+```php
+'plugins'     => [ \Quiote\Mcp\McpPlugin::class ],
+'mcp.enabled' => true,
+```
+
+The [Quiote Assistant MCP](/getting-started/mcp-assistant/) is a full reference app built on this package.
+
+## Observability
+
+### `quioteframework/telemetry-otel`
+
+OpenTelemetry-based distributed tracing and metrics: a span tree per request, resource metrics, W3C context propagation, and log correlation. Provides `Quiote\Telemetry\TelemetryPlugin`, which drives the SDK bootstrap and per-request flush. The always-on, no-op `Trace` facade stays in the kernel, so instrumentation call sites cost nothing when this package is absent or telemetry is off.
+
+```bash
+composer require quioteframework/telemetry-otel
+```
+
+Register the plugin, then turn it on with `telemetry.enabled = true` and pick an exporter:
+
+```php
+'plugins'           => [ \Quiote\Telemetry\TelemetryPlugin::class ],
+'telemetry.enabled' => true,
+```
+
+See [Telemetry](/architecture/telemetry/) for the full `telemetry.*` surface.
+
+### `quioteframework/telemetry-dashboard`
+
+A standalone terminal UI that receives OTLP and visualizes traces/metrics live — handy for local development without a full collector + backend. It's **completely independent of `quioteframework/telemetry-otel`**: it's an OTLP *receiver*, not the exporter, so it needs neither that package nor a running app. It contributes the `telemetry:dashboard` console command, which the CLI registers automatically whenever the package is installed — no `plugins` entry, no bootstrap. Point any OTLP source (a Quiote app exporting via telemetry-otel, or anything else) at it.
+
+```bash
+composer require quioteframework/telemetry-dashboard
+php bin/quiote telemetry:dashboard
+```
+
+## Database adapters
+
+Each adapter hands back a fully-configured ORM and registers a short `class` alias for use in your `databases` config. Install the package, then register its plugin so the alias resolves. Full parameter tables and usage are in [Databases](/basics/databases/).
+
+### `quioteframework/db-eloquent`
+
+```bash
+composer require quioteframework/db-eloquent
+```
+```php
+'plugins' => [ \Quiote\Database\Adapter\Eloquent\EloquentPlugin::class ],
+```
+Registers the `eloquent` alias → `EloquentDatabase`. See [Databases → Eloquent](/basics/databases/#eloquent).
+
+### `quioteframework/db-doctrine`
+
+```bash
+composer require quioteframework/db-doctrine
+```
+```php
+'plugins' => [ \Quiote\Database\Adapter\Doctrine\DoctrinePlugin::class ],
+```
+Registers both the `doctrine` (ORM) and `doctrine_dbal` (query builder only) aliases. See [Databases → Doctrine ORM](/basics/databases/#doctrine-orm).
+
+### `quioteframework/db-cycle`
+
+```bash
+composer require quioteframework/db-cycle
+```
+```php
+'plugins' => [ \Quiote\Database\Adapter\Cycle\CyclePlugin::class ],
+```
+Registers the `cycle` alias → `CycleDatabase` (configured in `databases.php` only — see [Databases → Cycle ORM](/basics/databases/#cycle-orm)).
+
+### `quioteframework/db-propulsion`
+
+```bash
+composer require quioteframework/db-propulsion
+```
+```php
+'plugins' => [ \Quiote\Database\Adapter\Propulsion\PropulsionPlugin::class ],
+```
+Registers the `propulsion` alias → `PropulsionDatabase`. Carries the [`quioteframework/propulsion`](https://github.com/quioteframework/propulsion) runtime — a PHP 8.5, Propel-style ORM with its own code generator (`bin/propulsion model:build`). Unlike the other adapters it owns its own connection factory (a runtime `config` file, no inline DSN or layer mode). See [Databases → Propulsion](/basics/databases/#propulsion).
+
+<Aside type="note" title="PDO stays in the core">
+The raw **PDO** driver (`class="pdo"`) is built into the kernel and always available — no package needed. Only the ORM adapters are extracted.
+</Aside>
+
+## Template renderers
+
+The kernel ships only the plain-PHP renderer (`Quiote\Renderer\PhpRenderer`, the default). Alternative renderers are packages. They plug into the **config-driven renderer registry** — there's no `plugins` entry: install the package, then point an output type's `renderer` at the class in `output_types.xml` (see [Templates and rendering](/basics/templates-and-rendering/)). Because renderers are chosen per output type, an app can mix them — PHP for HTML, XSLT for a document export, and so on.
+
+### `quioteframework/phptal`
+
+The [PHPTAL](https://phptal.org/) renderer, `Quiote\Renderer\Phptal\PhptalRenderer`.
+
+```bash
+composer require quioteframework/phptal
+```
+
+### `quioteframework/xslt`
+
+The XSLT renderer, `Quiote\Renderer\Xslt\XsltRenderer` (needs PHP's `ext-xsl`).
+
+```bash
+composer require quioteframework/xslt
+```
+
+### `quioteframework/twig`
+
+The [Twig](https://twig.symfony.com/) renderer, `Quiote\Renderer\Twig\TwigRenderer`. A native integration (not an extraction) whose `TemplateLayerLoader` bridges Twig's loader to Quiote's [layout/layer](/basics/templates-and-rendering/#layouts-and-layers) model.
+
+```bash
+composer require quioteframework/twig
+```
+
+## Session backends
+
+Alternative session storage backends, for sharing sessions across nodes or offloading them to managed object storage. The kernel ships PHP-native and null storage; these packages add database and cloud backends. See [Sessions and storage](/basics/sessions/).
+
+`session-pdo` provides both mechanisms Quiote supports — the legacy save-handler `Quiote\Storage\Pdo\PdoSessionStorage` (a `storage` factory role) and the modern `Quiote\Session\Pdo\PdoSessionPersistence` (`SessionPersistenceInterface`, backing `SessionManager`). The three cloud backends implement the modern `SessionPersistenceInterface` only — a better fit than the native handler for one-blob-per-session object storage. None of the cloud packages pull an official cloud SDK; each is a minimal hand-rolled REST client on PSR-18, covering just the handful of operations a session backend needs.
+
+### `quioteframework/session-pdo`
+
+Database-backed sessions in a table. `composer require quioteframework/session-pdo`.
+
+### `quioteframework/session-azure`
+
+Two backends in one package: `AzureBlobSessionPersistence` (one JSON blob per session) and `AzureTableSessionPersistence` (one entity per session, cheaper for small payloads), both under `Quiote\Storage\Azure` and authenticated with Azure's Shared-Key schemes. `composer require quioteframework/session-azure`.
+
+### `quioteframework/session-s3`
+
+`Quiote\Storage\S3\S3SessionPersistence` — AWS Signature v4, path-style requests, so it also targets MinIO and any S3-compatible store. `composer require quioteframework/session-s3`.
+
+### `quioteframework/session-gcs`
+
+`Quiote\Storage\Gcs\GcsSessionPersistence` — authenticates with a GCS **HMAC key pair** (the S3-compatible interoperability mode). `composer require quioteframework/session-gcs`.

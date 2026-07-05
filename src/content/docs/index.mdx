@@ -14,7 +14,11 @@ hero:
       variant: minimal
 ---
 
-import { CardGrid, Card } from '@astrojs/starlight/components';
+import { CardGrid, Card, LinkCard, Aside } from '@astrojs/starlight/components';
+
+<Aside type="danger" title="Pre-alpha — here be dragons">
+**Quiote is in a pre-alpha stage, and this documentation is incomplete and in flux.** APIs, conventions, and config surfaces described here can change without notice, some pages are still stubs or missing, and features may be documented ahead of — or behind — the code. Don't build anything you can't afford to rewrite. You've been warned.
+</Aside>
 
 <CardGrid stagger>
   <Card title="PSR-15 middleware pipeline" icon="seti:pipeline">
@@ -30,3 +34,55 @@ import { CardGrid, Card } from '@astrojs/starlight/components';
     PHP arrays, YAML, or XML — mixed and matched per file, with full inheritance across formats.
   </Card>
 </CardGrid>
+
+## A quick look
+
+A request flows **URL → route → action → view → template → response**. A route maps a path to a module and action:
+
+```php title="Routing/AppRouting.php"
+$routes->add('index', new Route('/', ['_module' => 'Default', '_action' => 'Index']));
+```
+
+The action decides *what happens* and returns the **name of a view** — never HTML. One class handles every verb: Quiote maps `GET → executeRead`, `POST → executeWrite`, `PUT`/`PATCH → executeUpdate`, `DELETE → executeRemove`.
+
+```php title="Modules/Default/Actions/IndexAction.php"
+class IndexAction extends Action
+{
+    public function executeRead(WebRequest $rd)
+    {
+        $this->setAttribute('title', 'Home');
+        return 'Success';  // render the "Success" view for this action
+    }
+}
+```
+
+That naming convention is the thread that ties everything together — the `Index` action returning `'Success'` resolves to the `IndexSuccessView` class and the `IndexSuccess` template. [Build the whole thing, end to end →](/getting-started/your-first-app/)
+
+## Get started
+
+Quiote isn't on Packagist yet — until the first stable release, install it straight from GitHub:
+
+```bash
+composer require quioteframework/quiote:dev-main
+```
+
+Then scaffold a fresh application:
+
+```bash
+vendor/bin/quiote new my-app
+```
+
+See [Installation](/getting-started/installation/) for requirements and the [command-line tool](/getting-started/cli/) for everything `quiote` can do.
+
+## Explore
+
+<CardGrid>
+  <LinkCard title="Your first application" href="/getting-started/your-first-app/" description="A complete app end to end — front controller, route, action, view, template." />
+  <LinkCard title="Design philosophy" href="/getting-started/philosophy/" description="Why Quiote favours an unopinionated core with opinionated drop-ins." />
+  <LinkCard title="The request lifecycle" href="/architecture/request-lifecycle/" description="The full path a request takes, from the kernel to the emitted response." />
+  <LinkCard title="The middleware pipeline" href="/architecture/middleware-pipeline/" description="How routing, security, validation, and dispatch compose as PSR-15 middleware." />
+</CardGrid>
+
+<Card title="Built for AI agents" icon="rocket">
+  Quiote ships a first-class **MCP server** — written in Quiote itself — that gives Claude Code, Cursor, or any MCP client authoritative, up-to-date knowledge of the framework: the docs, full-text search, and convention cards. [Set up the AI assistant →](/getting-started/mcp-assistant/)
+</Card>

@@ -218,7 +218,7 @@ On a non-`Allow` decision, `SecurityMiddleware` swaps the `ActionDescriptor` to 
 
 ## CSRF protection
 
-CSRF is on by default (`core.csrf.enabled`), enforced by two middlewares (see [The middleware pipeline](/architecture/middleware-pipeline/)):
+CSRF protection ships in the **[`quioteframework/csrf`](/plugins/official-packages/#quioteframeworkcsrf)** package (`Quiote\Security\Csrf\CsrfPlugin`) — a *required* kernel dependency that registers itself automatically, so it's on by default. Turning it off is a conscious act (`core.csrf.enabled => false`). It's enforced by two middlewares (see [The middleware pipeline](/architecture/middleware-pipeline/)):
 
 - **`CsrfInjectionMiddleware`** injects a hidden token field into every non-GET HTML form, adds a `<meta name="csrf-token">` tag, and sets a readable `XSRF-TOKEN` cookie for SPA clients.
 - **`CsrfValidationMiddleware`** rejects unsafe-method requests (non GET/HEAD/OPTIONS/TRACE) with 403 unless a valid token is present in the form field or the `X-CSRF-Token` header.
@@ -236,4 +236,4 @@ $routes->add('webhook', new Route('/hooks/stripe', [
 
 ## Login rate limiting
 
-The `Quiote\Security\RateLimit` components provide login throttling (`LoginThrottle`) with pluggable storage (e.g. `PdoRateLimiterStorage`), so repeated failed logins can be slowed or blocked. Wire it into your login action to defend against credential-stuffing.
+The optional **[`quioteframework/ratelimit`](/plugins/official-packages/#quioteframeworkratelimit)** package provides the `Quiote\Security\RateLimit` components — login throttling (`LoginThrottle`) with pluggable storage (e.g. `PdoRateLimiterStorage`), so repeated failed logins can be slowed or blocked. It's a library rather than a plugin: `composer require` it, then wire the throttle into your login action to defend against credential-stuffing.

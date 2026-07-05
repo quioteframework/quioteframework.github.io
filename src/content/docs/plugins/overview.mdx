@@ -1,0 +1,71 @@
+---
+title: Plugins overview
+description: How Quiote splits an unopinionated kernel from opinionated, separately-installable packages — and how you opt into the ones you want.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Quiote is built as an **unopinionated kernel plus opinionated drop-ins**. The core gives you the request pipeline, container, config system, routing, validation, and rendering — and almost nothing else. Everything with a strong opinion or a heavy dependency lives *outside* the kernel, in a separately-installable package you add when you want it.
+
+This is the [design philosophy](/getting-started/philosophy/) taken to its conclusion: a minimal app pulls only the kernel, and you opt into the rest with a `composer require` and a line of config.
+
+## Core, plugins, packages
+
+Three words that get used together here, kept straight:
+
+- **The core (kernel)** — `quioteframework/quiote`. The skeleton. It ships the seams a plugin plugs into (config, DI, middleware, events, routes, commands, database drivers, HTTP clients) and stays neutral about persistence, auth, front-end, observability, and so on.
+- **A plugin** — a class implementing `Quiote\Plugin\PluginInterface`. Its one `register()` call contributes to the core's seams. See [Plugins and extensibility](/architecture/plugins/) for the mechanism and how to write your own.
+- **A package** — a Composer package (`quioteframework/*` for the official ones) that *contains* a plugin (and its dependency). Installing the package puts the code on disk; enabling its plugin wires it in.
+
+The framework itself dogfoods this: **a whole family of subsystems that used to live in the core have been extracted into their own packages** — CSRF, rate limiting, the Whoops error page, the MCP server, OpenTelemetry export, the telemetry dashboard, the Eloquent / Doctrine / Cycle / Propulsion database adapters, the PHPTAL / XSLT / Twig template renderers, and PDO / Azure / S3 / GCS session backends. None of them is part of the kernel any more; each is a drop-in you choose (all MIT-licensed, atop the LGPL kernel). They're catalogued in [Official packages](/plugins/official-packages/).
+
+## Why extract them
+
+Two payoffs, both downstream of the philosophy:
+
+1. **A slim default install.** Code that runs on zero requests unless you opted in shouldn't be forced onto every deployment. Moving Whoops, CSRF, the rate limiter, OpenTelemetry, and the ORM adapters out of the kernel's dependencies keeps a bare app small — you pull `doctrine/orm` only if you install `quioteframework/db-doctrine`, and so on.
+2. **Honest opt-in.** When a feature is a package you install, "is this app using an ORM / telemetry / the MCP server?" is answered by looking at `composer.json` and the `plugins` config key — not by reading kernel internals. Nothing important happens because it happened to ship in core.
+
+## Enabling a package
+
+The pattern is always the same two steps — install, then enable:
+
+```bash
+composer require quioteframework/db-doctrine
+```
+
+Then register its plugin in the `plugins` config key (a bare, non-`core.` key — see [Settings reference](/architecture/settings-reference/)):
+
+```php
+// Config/settings.php
+'plugins' => [
+    \Quiote\Database\Adapter\Doctrine\DoctrinePlugin::class,
+],
+```
+
+`register()` runs once at boot, after your settings load and before contexts are created, and it can only *add* — your `settings.*` and container bindings always win. Two packages skip the `plugins` step: **rate limiting** is a plain library you call from your own code, and the **telemetry dashboard** contributes a standalone console command that's available as soon as the package is installed. [Official packages](/plugins/official-packages/) spells out the exact "enable" step for each one.
+
+### CSRF is the deliberate exception
+
+One package is *not* opt-in: **`quioteframework/csrf`**. It's a required dependency of the kernel and registers itself automatically at boot, so every app is CSRF-protected out of the box without a `plugins` entry. It's a security default, not a packaging convenience — so you turn it *off* consciously (set `core.csrf.enabled => false`, which logs a warning), rather than turning it on. See [Official packages → csrf](/plugins/official-packages/#quioteframeworkcsrf).
+
+<Aside type="caution" title="Pre-alpha: installing the packages">
+The `quioteframework/*` packages now live in their own GitHub repositories, but — like the kernel itself — they are **not published to Packagist yet** (it's early days). Until they are, add each one you use as a VCS repository in your app's `composer.json` and require the `dev-main` branch:
+
+```json
+"repositories": [
+  { "type": "vcs", "url": "https://github.com/quioteframework/db-doctrine" }
+],
+"require": {
+  "quioteframework/db-doctrine": "dev-main"
+}
+```
+
+The plain `composer require quioteframework/…` lines throughout these docs describe the eventual Packagist experience.
+</Aside>
+
+## See also
+
+- [Official packages](/plugins/official-packages/) — the catalogue of the nine extracted subsystems, with install + enable steps for each.
+- [Plugins and extensibility](/architecture/plugins/) — the plugin mechanism, the `PluginRegistrar` seams, and writing your own.
+- [Design philosophy](/getting-started/philosophy/) — why the core is deliberately unopinionated.

@@ -7,13 +7,14 @@ Once a view has decided what to show, a **renderer** turns a **template** into o
 
 ## Renderers
 
-A renderer implements `Quiote\Renderer\Renderer`. The framework ships several:
+A renderer implements `Quiote\Renderer\Renderer`. The kernel ships only the plain-PHP renderer; the rest are opt-in [packages](/plugins/official-packages/#template-renderers) — install the package, then name its class in the output type:
 
-| Renderer | Templates |
-|---|---|
-| `Quiote\Renderer\PhpRenderer` | Plain PHP (`.php`) — the default |
-| `Quiote\Renderer\PhptalRenderer` | PHPTAL |
-| `Quiote\Renderer\XsltRenderer` | XSLT |
+| Renderer | Templates | Ships in |
+|---|---|---|
+| `Quiote\Renderer\PhpRenderer` | Plain PHP (`.php`) — the default | the kernel |
+| `Quiote\Renderer\Phptal\PhptalRenderer` | PHPTAL | `quioteframework/phptal` |
+| `Quiote\Renderer\Xslt\XsltRenderer` | XSLT | `quioteframework/xslt` |
+| `Quiote\Renderer\Twig\TwigRenderer` | Twig | `quioteframework/twig` |
 
 You select the renderer per output type in `output_types` (see [Output types](/basics/output-types-and-content-negotiation/)):
 

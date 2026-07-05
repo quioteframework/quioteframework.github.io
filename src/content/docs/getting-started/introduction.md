@@ -39,3 +39,7 @@ It fits best when:
 - A team needs to retain very fine control over how requests are handled.
 
 If you need to ship something quickly with opinionated defaults that make common decisions for you, Laravel and Symfony are better choices. If you are migrating from Agavi, or building something you expect to maintain for a decade, read on — and see [Design philosophy](/getting-started/philosophy/) for *why* Quiote is deliberately unopinionated.
+
+## A slim core, opinionated packages
+
+That unopinionated stance is structural, not just cultural. The `quioteframework/quiote` kernel is a skeleton; the opinionated, heavier subsystems — rate limiting, the developer error page, an MCP server, OpenTelemetry, the Eloquent / Doctrine / Cycle / Propulsion ORM adapters, the PHPTAL / XSLT / Twig renderers, and PDO / cloud session backends — ship as separate `quioteframework/*` packages you install and enable only when you need them. (CSRF is the one that's on by default — a security posture you consciously disable rather than opt into.) See [Plugins overview](/plugins/overview/).

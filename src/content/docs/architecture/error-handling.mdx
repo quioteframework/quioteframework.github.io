@@ -60,7 +60,7 @@ core.developer_exceptions: false
 </Tabs>
 
 - **`false` (production default) → `SafeRenderer`.** Never leaks the class, message, or trace. It content-negotiates on `Accept`: a JSON body (`{error, status, correlation_id}`), a plain-text `Internal error`, or a minimal HTML page. The message is generic — `Internal Server Error` for 5xx, `Request Error` otherwise.
-- **`true` → `WhoopsRenderer`.** The full [Whoops](https://github.com/filp/whoops) developer page — stack trace, source, request data — or its JSON/plain-text handlers depending on `Accept`. It is configured to return markup as a string rather than writing to output, so it is safe under [worker mode](/architecture/deployment/).
+- **`true` → `WhoopsRenderer`.** The full [Whoops](https://github.com/filp/whoops) developer page — stack trace, source, request data — or its JSON/plain-text handlers depending on `Accept`. It is configured to return markup as a string rather than writing to output, so it is safe under [worker mode](/architecture/deployment/). The Whoops renderer ships in the optional **[`quioteframework/whoops`](/plugins/official-packages/#quioteframeworkwhoops)** package and is opt-in — install it and register `Quiote\Exception\Rendering\Whoops\WhoopsPlugin` in your `plugins`. Without the plugin, `core.developer_exceptions = true` still uses the `SafeRenderer`.
 
 Both include the request's correlation id, so an error a user reports can be matched to the log line for it. See [Logging](/architecture/logging/#correlation-ids).
 

@@ -164,6 +164,8 @@ After routing resolves (or overrides) the output type, re-syncs the controller's
 
 ## CsrfInjectionMiddleware
 
+Both CSRF middleware ship in the **[`quioteframework/csrf`](/plugins/official-packages/#quioteframeworkcsrf)** package (added to the pipeline by `Quiote\Security\Csrf\CsrfPlugin`) — a required kernel dependency that's registered automatically and on by default, so the entries below always apply unless you disable CSRF.
+
 Wraps the response to inject CSRF tokens into HTML forms, a `<meta>` tag, and the readable `XSRF-TOKEN` cookie. Runs by default; its behaviour is gated at runtime by `core.csrf.enabled`.
 
 ## CsrfValidationMiddleware
