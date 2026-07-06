@@ -3,7 +3,7 @@ title: Plugins overview
 description: How Quiote splits an unopinionated kernel from opinionated, separately-installable packages — and how you opt into the ones you want.
 ---
 
-import { Aside } from '@astrojs/starlight/components';
+import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 
 Quiote is built as an **unopinionated kernel plus opinionated drop-ins**. The core gives you the request pipeline, container, config system, routing, validation, and rendering — and almost nothing else. Everything with a strong opinion or a heavy dependency lives *outside* the kernel, in a separately-installable package you add when you want it.
 
@@ -34,16 +34,46 @@ The pattern is always the same two steps — install, then enable:
 composer require quioteframework/db-doctrine
 ```
 
-Then register its plugin in the `plugins` config key (a bare, non-`core.` key — see [Settings reference](/architecture/settings-reference/)):
+Then register its plugin in `Config/plugins.php` (or `.xml`/`.yaml`/`.yml`):
+
+<Tabs syncKey="config-format">
+<TabItem label="PHP">
 
 ```php
-// Config/settings.php
-'plugins' => [
-    \Quiote\Database\Adapter\Doctrine\DoctrinePlugin::class,
-],
+// Config/plugins.php
+return [
+    ['class' => \Quiote\Database\Adapter\Doctrine\DoctrinePlugin::class, 'enabled' => true],
+];
 ```
 
+</TabItem>
+<TabItem label="YAML">
+
+```yaml
+# Config/plugins.yaml
+- class: Quiote\Database\Adapter\Doctrine\DoctrinePlugin
+  enabled: true
+```
+
+</TabItem>
+<TabItem label="XML">
+
+```xml
+<!-- Config/plugins.xml -->
+<ae:configurations xmlns:ae="http://quiote.dev/quiote/config/global/envelope/1.1"
+                    xmlns="http://quiote.dev/quiote/config/parts/plugins/1.1">
+    <ae:configuration>
+        <plugin class="Quiote\Database\Adapter\Doctrine\DoctrinePlugin" />
+    </ae:configuration>
+</ae:configurations>
+```
+
+</TabItem>
+</Tabs>
+
 `register()` runs once at boot, after your settings load and before contexts are created, and it can only *add* — your `settings.*` and container bindings always win. Two packages skip the `plugins` step: **rate limiting** is a plain library you call from your own code, and the **telemetry dashboard** contributes a standalone console command that's available as soon as the package is installed. [Official packages](/plugins/official-packages/) spells out the exact "enable" step for each one.
+
+Every official package's plugin class already carries the required `#[Quiote\Plugin\Attribute\Plugin]` attribute — see [Plugins and extensibility → Writing a plugin](/architecture/plugins/#writing-a-plugin) for why that attribute exists and what it means for your own plugins.
 
 ### CSRF is the deliberate exception
 

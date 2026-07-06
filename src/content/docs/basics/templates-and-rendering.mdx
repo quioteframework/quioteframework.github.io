@@ -3,6 +3,8 @@ title: Templates and rendering
 description: How renderers, layouts, layers, and template variables produce a view's output.
 ---
 
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
 Once a view has decided what to show, a **renderer** turns a **template** into output. Quiote's default renderer runs plain PHP templates; layouts and layers let you compose a page from nested pieces. Nothing here is opinionated about your front end — the default is PHP files, and swapping in another renderer is a config change.
 
 ## Renderers
@@ -18,11 +20,40 @@ A renderer implements `Quiote\Renderer\Renderer`. The kernel ships only the plai
 
 You select the renderer per output type in `output_types` (see [Output types](/basics/output-types-and-content-negotiation/)):
 
+<Tabs syncKey="config-format">
+<TabItem label="PHP">
+
+```php
+// Config/output_types.php — inside the output type's array
+'default_renderer' => 'php',
+'renderers' => [
+    'php' => ['class' => \Quiote\Renderer\PhpRenderer::class],
+],
+```
+
+</TabItem>
+<TabItem label="YAML">
+
+```yaml
+# Config/output_types.yaml — inside the output type
+default_renderer: php
+renderers:
+  php:
+    class: Quiote\Renderer\PhpRenderer
+```
+
+</TabItem>
+<TabItem label="XML">
+
 ```xml
+<!-- Config/output_types.xml — inside the <output_type> -->
 <renderers default="php">
     <renderer name="php" class="Quiote\Renderer\PhpRenderer" />
 </renderers>
 ```
+
+</TabItem>
+</Tabs>
 
 ## Template variables
 
@@ -52,13 +83,47 @@ The variable name is configurable per renderer (`var_name`, default `template`),
 
 A view rarely renders a single file. A page is usually a **layout** made of **layers** — for example, an outer HTML shell wrapping an inner content layer. Layouts and their layers are declared in the output type:
 
+<Tabs syncKey="config-format">
+<TabItem label="PHP">
+
+```php
+// Config/output_types.php — inside the output type's array
+'default_layout' => 'default',
+'layouts' => [
+    'default' => [
+        'layers' => [
+            'content' => [],
+        ],
+    ],
+],
+```
+
+</TabItem>
+<TabItem label="YAML">
+
+```yaml
+# Config/output_types.yaml — inside the output type
+default_layout: default
+layouts:
+  default:
+    layers:
+      content: {}
+```
+
+</TabItem>
+<TabItem label="XML">
+
 ```xml
+<!-- Config/output_types.xml — inside the <output_type> -->
 <layouts default="default">
     <layout name="default">
         <layer name="content" />
     </layout>
 </layouts>
 ```
+
+</TabItem>
+</Tabs>
 
 In the view, `loadLayout()` reads this layout for the current output type and prepares its layers:
 

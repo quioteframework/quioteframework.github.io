@@ -3,14 +3,17 @@ title: Writing custom middleware
 description: Add your own PSR-15 middleware to the pipeline and position it precisely.
 ---
 
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
 Quiote's request pipeline is a plain PSR-15 stack (see [The middleware pipeline](/architecture/middleware-pipeline/)). Adding your own behaviour — a health check, a JWT authenticator, a tenant resolver — means writing a standard PSR-15 middleware and telling the pipeline where it goes.
 
-There are two ways to place it:
+There are three ways to place it, and they can be mixed freely:
 
+- **A `middleware.xml`/`.php`/`.yaml` config file** — declarative, no code: drop a file in `Config/` and it's registered, positioned by `before`/`after`/`phase`. Good for most apps, and the only way a module can register middleware just by being present (no app wiring). See [Declarative middleware.xml](#declarative-middlewarexml) below.
 - **`MiddlewareCatalog::register()`** — imperative: you pass a factory and explicit `before`/`after`/`priority`. Good for one-off wiring in a bootstrap file.
-- **The `#[Middleware]` attribute + `MiddlewareCatalog::registerAttributed()`** — declarative: the class states its own placement, and it is ordered in the same pass as the framework's own middleware (which is how they order themselves). Good for reusable middleware that ships with its position.
+- **The `#[Middleware]` attribute + `MiddlewareCatalog::registerAttributed()`** — declarative in code: the class states its own placement, and it is ordered in the same pass as the framework's own middleware (which is how they order themselves). Good for reusable middleware that ships with its position.
 
-Both are shown below.
+All three are shown below.
 
 ## Write a PSR-15 middleware
 
@@ -39,6 +42,51 @@ final class HealthzMiddleware implements MiddlewareInterface
 ```
 
 Two things every middleware does: it can short-circuit by returning a response (as `/healthz` does), or delegate downstream with `$handler->handle($request)` and optionally post-process the returned response on the way back out.
+
+## Declarative middleware.xml
+
+The no-code way. Drop a `middleware.xml` (or `.php`/`.yaml`/`.yml`) next to `settings.xml` in `Config/`, or inside any module's own `Config/` directory — resolved the same way as any other config type (`.php` > `.yaml`/`.yml` > `.xml`). This is a **drop-in**: a module registers its own middleware just by containing the file, no app wiring required.
+
+<Tabs syncKey="config-format">
+<TabItem label="PHP">
+
+```php
+// Config/middleware.php
+return [
+    ['class' => \App\Middleware\HealthzMiddleware::class, 'phase' => 'pre_routing', 'before' => 'SessionMiddleware'],
+];
+```
+
+</TabItem>
+<TabItem label="YAML">
+
+```yaml
+# Config/middleware.yaml
+- class: App\Middleware\HealthzMiddleware
+  phase: pre_routing
+  before: SessionMiddleware
+```
+
+</TabItem>
+<TabItem label="XML">
+
+```xml
+<!-- Config/middleware.xml -->
+<?xml version="1.0" encoding="UTF-8"?>
+<ae:configurations xmlns:ae="http://quiote.dev/quiote/config/global/envelope/1.1"
+                    xmlns="http://quiote.dev/quiote/config/parts/middleware/1.1">
+    <ae:configuration>
+        <use class="App\Middleware\HealthzMiddleware" phase="pre_routing" before="SessionMiddleware" />
+    </ae:configuration>
+</ae:configurations>
+```
+
+</TabItem>
+</Tabs>
+
+The PHP array shape above is exactly the canonical shape any format compiles to. Each entry is resolved via the [DI container](/architecture/container/) — like `registerAttributed()` below, no factory closures in config — and merged with any `#[Middleware]` attribute the class already carries: a field left unset (`null`) keeps the attribute's own value or the framework default; a field that's set overrides it. A class with no attribute at all can be declared purely through config — `phase` defaults to `'pre'` if omitted, same as the `#[Middleware]` attribute's own constructor default.
+
+**Framework middleware is protected by default.** Naming one of Quiote's own shipped classes (`ErrorHandlingMiddleware`, `SessionMiddleware`, `RoutingMiddleware`, `SecurityMiddleware`, etc. — see `MiddlewarePipeline::coreMiddlewareClasses()`) to change its `enabled` state or placement requires **both**: `override_framework: true` on that specific entry (`override-framework="true"` in XML — the attribute is hyphenated, the PHP/YAML key underscored), **and** the global `core.middleware.allow_framework_overrides` setting set to `true`. Either alone is refused with a `ConfigurationException` at config-load time (not silently ignored, and not deferred to the first request) — a config file, least of all one dropped in by a third-party module, shouldn't be able to silently disable error handling or CSRF just by declaring an entry.
 
 ## Option 1 — register()
 
@@ -248,3 +296,5 @@ What you get and what you owe:
 - Registered as it is (process-global static state), `replaceCoreStack()` must be called at bootstrap, before `Kernel::run()` — same timing as `register()`. `MiddlewareCatalog::reset()` clears it (along with registered middleware).
 
 If you only need to *remove* a default or two — not the whole stack — do not use this. Disable the specific middlewares via `MiddlewareCatalog::initialize([Fqcn::class => false])` (see [The middleware pipeline](/architecture/middleware-pipeline/)) and keep everything else.
+
+For copy-pasteable steps, see the [Plugins & middleware quickstart → Write your own middleware](/plugins/quickstart/#write-your-own-middleware).

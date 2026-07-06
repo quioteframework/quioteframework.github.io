@@ -46,11 +46,11 @@ After the attribute-ordered stack, any middleware added imperatively with `Middl
 
 **SessionMiddleware** — starts/attaches the session storage for the request so downstream middlewares (CSRF, security) can read and write it.
 
-**TimingMiddleware / TraceMiddleware** — optional diagnostics. Each is only built if enabled via `<middleware_config>`. `TimingMiddleware` records phase timings; `TraceMiddleware` records a request trace.
+**TimingMiddleware / TraceMiddleware** — optional diagnostics. Each is only built if enabled via `<middleware_config>`. `TimingMiddleware` records total request time; `TraceMiddleware` records a running trace of executed middleware. Their response headers are off by default and configured through ordinary `settings.*` keys (`middleware.timing.emit_header`, `middleware.trace.emit_header`/`header_name`) — see the [Middleware reference](/architecture/middleware-reference/#timingmiddleware).
 
 **PayloadParsingMiddleware** — parses the request body: JSON bodies and form bodies become the parsed body / parameters that validation and actions read.
 
-**ContentNegotiationMiddleware** — decides the output type (`html`, `json`, …) from the URL extension or the `Accept` header, and records it on the request. Runs before routing so routing can still override it. See [Output types](/basics/output-types-and-content-negotiation/).
+**ContentNegotiationMiddleware** — decides the output type (`html`, `json`, …) from the `Accept` header, and records it on the request. Runs before routing so routing can still override it. See [Output types](/basics/output-types-and-content-negotiation/).
 
 **RoutingMiddleware** — matches the path against the routing table, extracts `_module` / `_action`, maps the HTTP verb to an action-method token, and builds an `ActionDescriptor`. After this, the target action is known.
 
@@ -114,7 +114,7 @@ A middleware without an entry uses its attribute's `enabled` default (all framew
 
 ## Injecting your own middleware
 
-Applications add their own middleware two ways — the `#[Middleware]` attribute plus `MiddlewareCatalog::registerAttributed()` (joins the framework's ordering pass), or `MiddlewareCatalog::register()` (imperative, spliced in afterwards). Both are covered end to end — including where to register and the ordering caveats — in [Writing custom middleware](/advanced/custom-middleware/).
+Applications add their own middleware three ways — a declarative `middleware.xml`/`.php`/`.yaml` config file (no code, and the only way a module can register middleware just by being present), the `#[Middleware]` attribute plus `MiddlewareCatalog::registerAttributed()` (joins the framework's ordering pass), or `MiddlewareCatalog::register()` (imperative, spliced in afterwards). All three are covered end to end — including where to register and the ordering caveats — in [Writing custom middleware](/advanced/custom-middleware/).
 
 For the rare case where an app cannot run inside this lifecycle at all, `MiddlewareCatalog::replaceCoreStack()` discards the entire default stack and lets you supply your own — a deliberate footgun, gated behind an exact acknowledgement string. See [Replacing the entire stack](/advanced/custom-middleware/#replacing-the-entire-stack-the-footgun).
 

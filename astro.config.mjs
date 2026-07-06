@@ -44,6 +44,7 @@ export default defineConfig({
 						{ label: 'Overview', slug: 'plugins/overview' },
 						{ label: 'Official packages', slug: 'plugins/official-packages' },
 						{ label: 'Writing a plugin', slug: 'architecture/plugins' },
+						{ label: 'Plugins & middleware quickstart', slug: 'plugins/quickstart' },
 					],
 				},
 				{

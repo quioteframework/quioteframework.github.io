@@ -3,6 +3,8 @@ title: Writing a custom renderer
 description: The renderer contract, initialize/render/reset, worker-mode reuse, wiring it into an output type, and shipping it as a package.
 ---
 
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
 A **renderer** turns a template into an output string. The kernel ships one — `Quiote\Renderer\PhpRenderer`, for plain PHP templates — and PHPTAL, XSLT, and Twig are opt-in [packages](/plugins/official-packages/#template-renderers). [Templates and rendering](/basics/templates-and-rendering/) covers *using* them. This page is about *writing your own* — for a template language none of those cover (Blade, Markdown, Mustache), or a bespoke output format.
 
 Renderers are chosen per [output type](/basics/output-types-and-content-negotiation/) through a plain config registry — **there is no renderer plugin class**. Writing one is two steps: implement the contract, then name your class in `output_types.xml`.
@@ -81,12 +83,40 @@ foreach ($this->assigns as $variable => $getter) {
 }
 ```
 
+<Tabs syncKey="config-format">
+<TabItem label="PHP">
+
+```php
+// Config/output_types.php — inside the renderer's 'parameters'
+'assigns' => [
+    'routing' => 'ro',   // $ro = $context->getRouting()
+    'request' => 'rq',   // $rq = $context->getRequest()
+],
+```
+
+</TabItem>
+<TabItem label="YAML">
+
+```yaml
+# Config/output_types.yaml — inside the renderer's parameters
+assigns:
+  routing: ro   # $ro = $context->getRouting()
+  request: rq   # $rq = $context->getRequest()
+```
+
+</TabItem>
+<TabItem label="XML">
+
 ```xml
+<!-- Config/output_types.xml — inside the <renderer> -->
 <parameter name="assigns">
     <parameter name="routing">ro</parameter>   <!-- $ro = $context->getRouting() -->
     <parameter name="request">rq</parameter>   <!-- $rq = $context->getRequest() -->
 </parameter>
 ```
+
+</TabItem>
+</Tabs>
 
 ## Worker-mode reuse: `IReusableRenderer` and `reset()`
 
@@ -99,9 +129,43 @@ If in doubt, skip the marker and accept per-render construction; it's the safe d
 
 ## Wiring it into an output type
 
-Renderer selection is a plain config-driven registry, unrelated to the [plugin system](/architecture/plugins/) — no registrar call. Declare your class per output type in `output_types.xml`:
+Renderer selection is a plain config-driven registry, unrelated to the [plugin system](/architecture/plugins/) — no registrar call. Declare your class per output type in `Config/output_types.{xml,php,yaml,yml}`:
+
+<Tabs syncKey="config-format">
+<TabItem label="PHP">
+
+```php
+// Config/output_types.php — inside the "html" output type's array
+'default_renderer' => 'md',
+'renderers' => [
+    'php' => ['class' => \Quiote\Renderer\PhpRenderer::class],
+    'md'  => [
+        'class'      => \App\Renderer\MarkdownRenderer::class,
+        'parameters' => ['var_name' => 'data'],
+    ],
+],
+```
+
+</TabItem>
+<TabItem label="YAML">
+
+```yaml
+# Config/output_types.yaml — inside the "html" output type
+default_renderer: md
+renderers:
+  php:
+    class: Quiote\Renderer\PhpRenderer
+  md:
+    class: App\Renderer\MarkdownRenderer
+    parameters:
+      var_name: data
+```
+
+</TabItem>
+<TabItem label="XML">
 
 ```xml
+<!-- Config/output_types.xml -->
 <output_type name="html">
     <renderers default="md">
         <renderer name="php" class="Quiote\Renderer\PhpRenderer" />
@@ -111,6 +175,9 @@ Renderer selection is a plain config-driven registry, unrelated to the [plugin s
     </renderers>
 </output_type>
 ```
+
+</TabItem>
+</Tabs>
 
 - `renderers[default]` picks the renderer an output type uses when a view doesn't name one explicitly; a layer can override with a `renderer` attribute, so one output type can mix engines (an XSLT export beside PHP-rendered HTML).
 - Any `<parameter>` children become the array passed to `initialize()` — this is how `var_name`, `encoding`, `assigns`, etc. reach your renderer.

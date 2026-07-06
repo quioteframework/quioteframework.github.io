@@ -69,10 +69,10 @@ Five tools work with no target app at all; they answer questions about the frame
 {
   "task": "add-plugin", "title": "Write and register a plugin",
   "steps": [
-    { "description": "Implement PluginInterface -- a name() and a register()...",
-      "code": "final class HealthPlugin implements PluginInterface { ... }" },
-    { "description": "Add the class to the plugins list in Config/settings.php...",
-      "code": "'plugins' => [ \\App\\Plugin\\HealthPlugin::class ]," }
+    { "description": "Implement PluginInterface -- a name() and a register() -- and mark it with #[Plugin]...",
+      "code": "#[Plugin] final class HealthPlugin implements PluginInterface { ... }" },
+    { "description": "Activate it in Config/plugins.php...",
+      "code": "return [ ['class' => \\App\\Plugin\\HealthPlugin::class, 'enabled' => true] ];" }
   ]
 }
 ```
@@ -215,15 +215,18 @@ Omit `--target-app-dir` if you only want the knowledge tools. Once registered, t
 
 This is the part worth studying if you're building your own MCP server on Quiote — the assistant is deliberately a plain app with nothing special about it.
 
-**It's turned on by two settings.** `mcp.enabled = true`, plus both `Quiote\Mcp\McpPlugin` (which publishes the `mcp.*` settings and registers the `mcp:serve` transport) and the app's own `AssistantPlugin` listed in the `plugins` config key:
+**It's turned on by two settings.** `mcp.enabled = true`, plus both `Quiote\Mcp\McpPlugin` (which publishes the `mcp.*` settings and registers the `mcp:serve` transport) and the app's own `AssistantPlugin` activated in `Config/plugins.php` (each plugin class carries the required `#[Plugin]` attribute):
+
+```php
+// app/Config/plugins.php
+return [
+    ['class' => \Quiote\Mcp\McpPlugin::class, 'enabled' => true],
+    ['class' => \QuioteMcpAssistant\Mcp\AssistantPlugin::class, 'enabled' => true],
+];
+```
 
 ```php
 // app/Config/settings.php
-'plugins' => [
-    \Quiote\Mcp\McpPlugin::class,
-    \QuioteMcpAssistant\Mcp\AssistantPlugin::class,
-],
-
 'mcp.enabled'    => true,
 'mcp.transports' => ['stdio', 'http'],
 'mcp.server_name' => 'quiote-assistant',

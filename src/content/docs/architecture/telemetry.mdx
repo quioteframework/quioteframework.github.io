@@ -17,10 +17,40 @@ Telemetry lives outside the kernel, in the optional **[`quioteframework/telemetr
 
 Install the [`quioteframework/telemetry-otel`](/plugins/official-packages/#quioteframeworktelemetry-otel) package and register its plugin, then set `telemetry.enabled` and pick an exporter. Registering the plugin is what wires telemetry in — it's fully opt-in:
 
+<Tabs syncKey="config-format">
+<TabItem label="PHP">
+
 ```php
-// Config/settings.php
-'plugins' => [ \Quiote\Telemetry\TelemetryPlugin::class ],
+// Config/plugins.php
+return [
+    ['class' => \Quiote\Telemetry\TelemetryPlugin::class, 'enabled' => true],
+];
 ```
+
+</TabItem>
+<TabItem label="YAML">
+
+```yaml
+# Config/plugins.yaml
+- class: Quiote\Telemetry\TelemetryPlugin
+  enabled: true
+```
+
+</TabItem>
+<TabItem label="XML">
+
+```xml
+<!-- Config/plugins.xml -->
+<ae:configurations xmlns:ae="http://quiote.dev/quiote/config/global/envelope/1.1"
+                    xmlns="http://quiote.dev/quiote/config/parts/plugins/1.1">
+    <ae:configuration>
+        <plugin class="Quiote\Telemetry\TelemetryPlugin" />
+    </ae:configuration>
+</ae:configurations>
+```
+
+</TabItem>
+</Tabs>
 
 Then, in each config format:
 

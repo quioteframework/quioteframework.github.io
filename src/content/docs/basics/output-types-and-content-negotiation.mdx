@@ -11,7 +11,7 @@ This is how one action and one view serve a browser HTML and an API client JSON,
 
 ## Declaring output types
 
-Output types are declared in the `output_types` config. A minimal HTML type:
+Output types are declared in the `output_types` config. A minimal HTML type — only `renderers` and `default_renderer` are load-bearing; everything else defaults sensibly:
 
 <Tabs syncKey="config-format">
 <TabItem label="PHP">
@@ -27,27 +27,16 @@ return [
             ],
             'default_renderer' => 'php',
             'renderers' => [
-                'php' => [
-                    'class'      => \Quiote\Renderer\PhpRenderer::class,
-                    'instance'   => null,
-                    'parameters' => [],
-                ],
+                'php' => ['class' => \Quiote\Renderer\PhpRenderer::class],
             ],
             'default_layout' => 'default',
             'layouts' => [
                 'default' => [
-                    'parameters' => [],
                     'layers' => [
-                        'content' => [
-                            'class'      => \Quiote\View\FileTemplateLayer::class,
-                            'parameters' => [],
-                            'renderer'   => null,
-                            'slots'      => [],
-                        ],
+                        'content' => [],
                     ],
                 ],
             ],
-            'exception_template' => null,
         ],
     ],
 ];
@@ -68,19 +57,11 @@ output_types:
     renderers:
       php:
         class: Quiote\Renderer\PhpRenderer
-        instance: null
-        parameters: []
     default_layout: default
     layouts:
       default:
-        parameters: []
         layers:
-          content:
-            class: Quiote\View\FileTemplateLayer
-            parameters: []
-            renderer: null
-            slots: []
-    exception_template: null
+          content: {}
 ```
 
 </TabItem>
@@ -121,11 +102,11 @@ Each output type declares:
 
 The default (`html` here) names the output type used when negotiation does not pick one.
 
-:::note[XML is more concise for output types]
-Output types are the one config where XML pays off. The PHP and YAML forms are the **fully-resolved** structure, so they must spell out defaults that XML fills in for you — each layer's `class`, the renderer's `instance`, and empty `parameters` / `slots` — and even an output type with no layout must still include empty `layouts` and a null `default_layout`. XML output-type config also still uses the legacy `http://quiote.org/quiote/1.0/config` namespace (transformed at load time), rather than the `1.1` envelope used by settings, factories, and databases.
+:::note[PHP/YAML and XML now default the same way]
+PHP, YAML, and XML output-type config all apply the same defaults: a renderer only needs `class` (`instance` and `parameters` default to none); a layer only needs to exist (`class` defaults to `Quiote\View\FileTemplateLayer`, `parameters`/`slots` to empty, `renderer` to the layout's own); a layout only needs `layers`; an output type with no layout can simply omit `layouts`/`default_layout` in any format. You only need to spell out a key when you want something other than the default. (One small asymmetry: an omitted slot field like `action` or `module` resolves to `null` in XML and to `''` in PHP/YAML — both are falsy, so it rarely matters in practice.) XML output-type config also still uses the legacy `http://quiote.org/quiote/1.0/config` namespace (transformed at load time), rather than the `1.1` envelope used by settings, factories, and databases.
 :::
 
-A JSON output type usually needs no layout — it sets the right `Content-Type` and lets the view return a body string. In XML you simply omit `<layouts>`; in PHP/YAML you still include an empty `layouts` and a null `default_layout` (they are read unconditionally):
+A JSON output type usually needs no layout — it sets the right `Content-Type` and lets the view return a body string. Omit `layouts`/`default_layout` entirely in any format:
 
 <Tabs syncKey="config-format">
 <TabItem label="PHP">
@@ -138,11 +119,8 @@ A JSON output type usually needs no layout — it sets the right `Content-Type` 
     ],
     'default_renderer' => 'php',
     'renderers' => [
-        'php' => ['class' => \Quiote\Renderer\PhpRenderer::class, 'instance' => null, 'parameters' => []],
+        'php' => ['class' => \Quiote\Renderer\PhpRenderer::class],
     ],
-    'default_layout' => null,
-    'layouts' => [],
-    'exception_template' => null,
 ],
 ```
 
@@ -159,11 +137,6 @@ json:
   renderers:
     php:
       class: Quiote\Renderer\PhpRenderer
-      instance: null
-      parameters: []
-  default_layout: null
-  layouts: {}
-  exception_template: null
 ```
 
 </TabItem>
@@ -186,10 +159,9 @@ json:
 
 ## Content negotiation
 
-`ContentNegotiationMiddleware` runs early (before routing) and picks the output type in two steps:
+`ContentNegotiationMiddleware` runs early (before routing) and negotiates the output type from the request's `Accept` header against the MIME types the app declares (`html`, `json`, `xml`, `pdf`, `csv`, `xlsx`, `docx`, `txt` — `html` wins ties and wildcards). If the request has no `Accept` header, or nothing matches, it falls back to `html`.
 
-1. **By URL extension** — `/report.json` selects `json`, `/report.xml` selects `xml`, via the MIME-type registry.
-2. **By `Accept` header** — if no extension decides it, the middleware negotiates the best match between the client's `Accept` header and the MIME types the app declares.
+There is no URL-extension-based detection (`/report.json` does **not** select `json` on its own) and no `?format=` query parameter — `Accept` is the only signal this middleware reads.
 
 The chosen output type is stored on the request. Because negotiation runs before routing, a route can still override the result by fixing `_output_type` (or the `#[Route(outputType: ...)]` field), which `OutputTypeSyncMiddleware` reconciles.
 

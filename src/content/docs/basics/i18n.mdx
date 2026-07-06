@@ -68,9 +68,78 @@ The `$domain` argument selects a translation domain; a leading `.` prefixes the 
 
 ## The translation catalog
 
-Locales and translators are declared in `Config/translation.xml`. Like all Quiote config it is compiled and cached; unlike settings it has a dedicated schema (namespace `.../config/parts/translation/1.1`). It has two sections — available locales, and the translators that do the work:
+Locales and translators are declared in `Config/translation.{xml,php,yaml,yml}`. Like all Quiote config it is compiled and cached; unlike settings it has a dedicated schema (namespace `.../config/parts/translation/1.1`) whose canonical PHP/YAML shape is a flatter array than the nested XML. It has two sections — available locales, and the translators that do the work:
+
+<Tabs syncKey="config-format">
+<TabItem label="PHP">
+
+```php
+// Config/translation.php
+return [
+    'default_domain'   => 'default',
+    'default_locale'   => 'en_US',
+    'default_timezone' => 'America/Los_Angeles',
+    'locales' => [
+        'en_US' => ['name' => 'en_US', 'params' => [], 'fallback' => null, 'ldml_file' => null],
+        'de_DE' => ['name' => 'de_DE', 'params' => [], 'fallback' => null, 'ldml_file' => null],
+        'fi_FI' => ['name' => 'fi_FI', 'params' => [], 'fallback' => null, 'ldml_file' => null],
+    ],
+    'translators' => [
+        'default' => [
+            'msg' => [
+                'class'   => \Quiote\Translation\GettextTranslator::class,
+                'filters' => [],
+                'params'  => ['text_domains' => ['default' => '%core.app_dir%/data/i18n']],
+            ],
+            'num' => ['class' => \Quiote\Translation\QuioteNumberFormatter::class, 'filters' => [], 'params' => []],
+            'cur' => ['class' => \Quiote\Translation\CurrencyFormatter::class, 'filters' => [], 'params' => ['currency_code' => 'EUR']],
+            'date' => ['class' => \Quiote\Translation\DateFormatter::class, 'filters' => [], 'params' => ['format' => 'medium']],
+        ],
+    ],
+];
+```
+
+</TabItem>
+<TabItem label="YAML">
+
+```yaml
+# Config/translation.yaml
+default_domain: default
+default_locale: en_US
+default_timezone: America/Los_Angeles
+locales:
+  en_US: {name: en_US, params: {}, fallback: null, ldml_file: null}
+  de_DE: {name: de_DE, params: {}, fallback: null, ldml_file: null}
+  fi_FI: {name: fi_FI, params: {}, fallback: null, ldml_file: null}
+translators:
+  default:
+    msg:
+      class: Quiote\Translation\GettextTranslator
+      filters: []
+      params:
+        text_domains:
+          default: '%core.app_dir%/data/i18n'
+    num:
+      class: Quiote\Translation\QuioteNumberFormatter
+      filters: []
+      params: {}
+    cur:
+      class: Quiote\Translation\CurrencyFormatter
+      filters: []
+      params:
+        currency_code: EUR
+    date:
+      class: Quiote\Translation\DateFormatter
+      filters: []
+      params:
+        format: medium
+```
+
+</TabItem>
+<TabItem label="XML">
 
 ```xml
+<!-- Config/translation.xml -->
 <ae:configurations
     xmlns:ae="http://quiote.dev/quiote/config/global/envelope/1.1"
     xmlns="http://quiote.dev/quiote/config/parts/translation/1.1">
@@ -105,7 +174,10 @@ Locales and translators are declared in `Config/translation.xml`. Like all Quiot
 </ae:configurations>
 ```
 
-- `default_locale` and `default_timezone` are attributes on `<available_locales>`.
+</TabItem>
+</Tabs>
+
+- `default_locale` and `default_timezone` are attributes on `<available_locales>` (top-level `default_locale`/`default_timezone` keys in PHP/YAML).
 - Each `<translator>` can carry a `<message_translator>` plus `<number_formatter>`, `<currency_formatter>`, and `<date_formatter>`. Translators nest, producing hierarchical domains like `default.errors`.
 - When a formatter element is present without a `class`, a sensible default class is used (`QuioteNumberFormatter`, `CurrencyFormatter`, `DateFormatter`). A `<message_translator>` has no default — you name the class.
 

@@ -97,9 +97,41 @@ Roles and their permissions are defined in the `rbac_definitions` config. So in 
 
 ### Defining roles and permissions
 
-Roles and permissions live in `Config/rbac_definitions.xml`. Role hierarchy is expressed by **nesting** — a role declared inside another role's `<roles>` is a child, and a granted role receives its own permissions plus every ancestor's:
+Roles and permissions live in `Config/rbac_definitions.{xml,php,yaml,yml}`. Role hierarchy is expressed by **nesting** in XML — a role declared inside another role's `<roles>` is a child; the PHP/YAML canonical form flattens that into a `parent` key per role instead. A granted role receives its own permissions plus every ancestor's:
+
+<Tabs syncKey="config-format">
+<TabItem label="PHP">
+
+```php
+// Config/rbac_definitions.php
+return [
+    'guest'          => ['parent' => null,             'permissions' => ['photos.list']],
+    'member'         => ['parent' => 'guest',           'permissions' => ['photos.rate']],
+    'photomoderator' => ['parent' => 'member',           'permissions' => ['photos.edit', 'photos.delete']],
+];
+```
+
+</TabItem>
+<TabItem label="YAML">
+
+```yaml
+# Config/rbac_definitions.yaml
+guest:
+  parent: null
+  permissions: [photos.list]
+member:
+  parent: guest
+  permissions: [photos.rate]
+photomoderator:
+  parent: member
+  permissions: [photos.edit, photos.delete]
+```
+
+</TabItem>
+<TabItem label="XML">
 
 ```xml
+<!-- Config/rbac_definitions.xml -->
 <ae:configurations
     xmlns:ae="http://quiote.dev/quiote/config/global/envelope/1.1"
     xmlns="http://quiote.dev/quiote/config/parts/rbac_definitions/1.1">
@@ -130,9 +162,12 @@ Roles and permissions live in `Config/rbac_definitions.xml`. Role hierarchy is e
 </ae:configurations>
 ```
 
+</TabItem>
+</Tabs>
+
 Here `photomoderator` inherits `member`'s `photos.rate` and `guest`'s `photos.list` on top of its own permissions. Granting `photomoderator` therefore adds all of them as credentials, so an action requiring `photos.delete` is allowed. A `member` — lacking `photos.delete` — is forwarded to the `secure` action; an unauthenticated user is forwarded to `login`.
 
-`rbac_definitions.xml` is compiled and cached like the rest of Quiote's config; it is read once when the `RbacSecurityUser` initializes (from `core.config_dir`, overridable with the user's `definitions_file` parameter).
+`rbac_definitions.*` is compiled and cached like the rest of Quiote's config; it is read once when the `RbacSecurityUser` initializes (from `core.config_dir`, overridable with the user's `definitions_file` parameter).
 
 ## Authenticating a user
 

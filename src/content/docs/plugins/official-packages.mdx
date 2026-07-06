@@ -3,7 +3,7 @@ title: Official packages
 description: The quioteframework/* packages extracted from the kernel — what each provides, what it depends on, and how to install and enable it.
 ---
 
-import { Aside } from '@astrojs/starlight/components';
+import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 
 A growing set of subsystems that once lived in the core — or that a batteries-included framework would bake in — now ship as their own `quioteframework/*` packages. Each is optional: install it only when you need it, and the dependency it carries stays out of a bare install. This page is the catalogue — for the model behind it, read [Plugins overview](/plugins/overview/) first.
 
@@ -69,9 +69,41 @@ The rich developer exception page — full stack trace, source, and request data
 ```bash
 composer require quioteframework/whoops
 ```
+
+<Tabs syncKey="config-format">
+<TabItem label="PHP">
+
 ```php
-'plugins' => [ \Quiote\Exception\Rendering\Whoops\WhoopsPlugin::class ],
+// Config/plugins.php
+return [
+    ['class' => \Quiote\Exception\Rendering\Whoops\WhoopsPlugin::class, 'enabled' => true],
+];
 ```
+
+</TabItem>
+<TabItem label="YAML">
+
+```yaml
+# Config/plugins.yaml
+- class: Quiote\Exception\Rendering\Whoops\WhoopsPlugin
+  enabled: true
+```
+
+</TabItem>
+<TabItem label="XML">
+
+```xml
+<!-- Config/plugins.xml -->
+<ae:configurations xmlns:ae="http://quiote.dev/quiote/config/global/envelope/1.1"
+                    xmlns="http://quiote.dev/quiote/config/parts/plugins/1.1">
+    <ae:configuration>
+        <plugin class="Quiote\Exception\Rendering\Whoops\WhoopsPlugin" />
+    </ae:configuration>
+</ae:configurations>
+```
+
+</TabItem>
+</Tabs>
 
 Keep `core.developer_exceptions` **off** in production regardless — the page exposes source and environment. See [Error handling → Developer vs safe rendering](/architecture/error-handling/#developer-vs-safe-rendering).
 
@@ -85,8 +117,43 @@ composer require quioteframework/mcp
 
 Enable the plugin and switch MCP on:
 
+<Tabs syncKey="config-format">
+<TabItem label="PHP">
+
 ```php
-'plugins'     => [ \Quiote\Mcp\McpPlugin::class ],
+// Config/plugins.php
+return [
+    ['class' => \Quiote\Mcp\McpPlugin::class, 'enabled' => true],
+];
+```
+
+</TabItem>
+<TabItem label="YAML">
+
+```yaml
+# Config/plugins.yaml
+- class: Quiote\Mcp\McpPlugin
+  enabled: true
+```
+
+</TabItem>
+<TabItem label="XML">
+
+```xml
+<!-- Config/plugins.xml -->
+<ae:configurations xmlns:ae="http://quiote.dev/quiote/config/global/envelope/1.1"
+                    xmlns="http://quiote.dev/quiote/config/parts/plugins/1.1">
+    <ae:configuration>
+        <plugin class="Quiote\Mcp\McpPlugin" />
+    </ae:configuration>
+</ae:configurations>
+```
+
+</TabItem>
+</Tabs>
+
+```php
+// Config/settings.php
 'mcp.enabled' => true,
 ```
 
@@ -104,8 +171,43 @@ composer require quioteframework/telemetry-otel
 
 Register the plugin, then turn it on with `telemetry.enabled = true` and pick an exporter:
 
+<Tabs syncKey="config-format">
+<TabItem label="PHP">
+
 ```php
-'plugins'           => [ \Quiote\Telemetry\TelemetryPlugin::class ],
+// Config/plugins.php
+return [
+    ['class' => \Quiote\Telemetry\TelemetryPlugin::class, 'enabled' => true],
+];
+```
+
+</TabItem>
+<TabItem label="YAML">
+
+```yaml
+# Config/plugins.yaml
+- class: Quiote\Telemetry\TelemetryPlugin
+  enabled: true
+```
+
+</TabItem>
+<TabItem label="XML">
+
+```xml
+<!-- Config/plugins.xml -->
+<ae:configurations xmlns:ae="http://quiote.dev/quiote/config/global/envelope/1.1"
+                    xmlns="http://quiote.dev/quiote/config/parts/plugins/1.1">
+    <ae:configuration>
+        <plugin class="Quiote\Telemetry\TelemetryPlugin" />
+    </ae:configuration>
+</ae:configurations>
+```
+
+</TabItem>
+</Tabs>
+
+```php
+// Config/settings.php
 'telemetry.enabled' => true,
 ```
 
@@ -129,9 +231,42 @@ Each adapter hands back a fully-configured ORM and registers a short `class` ali
 ```bash
 composer require quioteframework/db-eloquent
 ```
+
+<Tabs syncKey="config-format">
+<TabItem label="PHP">
+
 ```php
-'plugins' => [ \Quiote\Database\Adapter\Eloquent\EloquentPlugin::class ],
+// Config/plugins.php
+return [
+    ['class' => \Quiote\Database\Adapter\Eloquent\EloquentPlugin::class, 'enabled' => true],
+];
 ```
+
+</TabItem>
+<TabItem label="YAML">
+
+```yaml
+# Config/plugins.yaml
+- class: Quiote\Database\Adapter\Eloquent\EloquentPlugin
+  enabled: true
+```
+
+</TabItem>
+<TabItem label="XML">
+
+```xml
+<!-- Config/plugins.xml -->
+<ae:configurations xmlns:ae="http://quiote.dev/quiote/config/global/envelope/1.1"
+                    xmlns="http://quiote.dev/quiote/config/parts/plugins/1.1">
+    <ae:configuration>
+        <plugin class="Quiote\Database\Adapter\Eloquent\EloquentPlugin" />
+    </ae:configuration>
+</ae:configurations>
+```
+
+</TabItem>
+</Tabs>
+
 Registers the `eloquent` alias → `EloquentDatabase`. See [Databases → Eloquent](/basics/databases/#eloquent).
 
 ### `quioteframework/db-doctrine`
@@ -139,9 +274,42 @@ Registers the `eloquent` alias → `EloquentDatabase`. See [Databases → Eloque
 ```bash
 composer require quioteframework/db-doctrine
 ```
+
+<Tabs syncKey="config-format">
+<TabItem label="PHP">
+
 ```php
-'plugins' => [ \Quiote\Database\Adapter\Doctrine\DoctrinePlugin::class ],
+// Config/plugins.php
+return [
+    ['class' => \Quiote\Database\Adapter\Doctrine\DoctrinePlugin::class, 'enabled' => true],
+];
 ```
+
+</TabItem>
+<TabItem label="YAML">
+
+```yaml
+# Config/plugins.yaml
+- class: Quiote\Database\Adapter\Doctrine\DoctrinePlugin
+  enabled: true
+```
+
+</TabItem>
+<TabItem label="XML">
+
+```xml
+<!-- Config/plugins.xml -->
+<ae:configurations xmlns:ae="http://quiote.dev/quiote/config/global/envelope/1.1"
+                    xmlns="http://quiote.dev/quiote/config/parts/plugins/1.1">
+    <ae:configuration>
+        <plugin class="Quiote\Database\Adapter\Doctrine\DoctrinePlugin" />
+    </ae:configuration>
+</ae:configurations>
+```
+
+</TabItem>
+</Tabs>
+
 Registers both the `doctrine` (ORM) and `doctrine_dbal` (query builder only) aliases. See [Databases → Doctrine ORM](/basics/databases/#doctrine-orm).
 
 ### `quioteframework/db-cycle`
@@ -149,9 +317,42 @@ Registers both the `doctrine` (ORM) and `doctrine_dbal` (query builder only) ali
 ```bash
 composer require quioteframework/db-cycle
 ```
+
+<Tabs syncKey="config-format">
+<TabItem label="PHP">
+
 ```php
-'plugins' => [ \Quiote\Database\Adapter\Cycle\CyclePlugin::class ],
+// Config/plugins.php
+return [
+    ['class' => \Quiote\Database\Adapter\Cycle\CyclePlugin::class, 'enabled' => true],
+];
 ```
+
+</TabItem>
+<TabItem label="YAML">
+
+```yaml
+# Config/plugins.yaml
+- class: Quiote\Database\Adapter\Cycle\CyclePlugin
+  enabled: true
+```
+
+</TabItem>
+<TabItem label="XML">
+
+```xml
+<!-- Config/plugins.xml -->
+<ae:configurations xmlns:ae="http://quiote.dev/quiote/config/global/envelope/1.1"
+                    xmlns="http://quiote.dev/quiote/config/parts/plugins/1.1">
+    <ae:configuration>
+        <plugin class="Quiote\Database\Adapter\Cycle\CyclePlugin" />
+    </ae:configuration>
+</ae:configurations>
+```
+
+</TabItem>
+</Tabs>
+
 Registers the `cycle` alias → `CycleDatabase` (configured in `databases.php` only — see [Databases → Cycle ORM](/basics/databases/#cycle-orm)).
 
 ### `quioteframework/db-propulsion`
@@ -159,9 +360,42 @@ Registers the `cycle` alias → `CycleDatabase` (configured in `databases.php` o
 ```bash
 composer require quioteframework/db-propulsion
 ```
+
+<Tabs syncKey="config-format">
+<TabItem label="PHP">
+
 ```php
-'plugins' => [ \Quiote\Database\Adapter\Propulsion\PropulsionPlugin::class ],
+// Config/plugins.php
+return [
+    ['class' => \Quiote\Database\Adapter\Propulsion\PropulsionPlugin::class, 'enabled' => true],
+];
 ```
+
+</TabItem>
+<TabItem label="YAML">
+
+```yaml
+# Config/plugins.yaml
+- class: Quiote\Database\Adapter\Propulsion\PropulsionPlugin
+  enabled: true
+```
+
+</TabItem>
+<TabItem label="XML">
+
+```xml
+<!-- Config/plugins.xml -->
+<ae:configurations xmlns:ae="http://quiote.dev/quiote/config/global/envelope/1.1"
+                    xmlns="http://quiote.dev/quiote/config/parts/plugins/1.1">
+    <ae:configuration>
+        <plugin class="Quiote\Database\Adapter\Propulsion\PropulsionPlugin" />
+    </ae:configuration>
+</ae:configurations>
+```
+
+</TabItem>
+</Tabs>
+
 Registers the `propulsion` alias → `PropulsionDatabase`. Carries the [`quioteframework/propulsion`](https://github.com/quioteframework/propulsion) runtime — a PHP 8.5, Propel-style ORM with its own code generator (`bin/propulsion model:build`). Unlike the other adapters it owns its own connection factory (a runtime `config` file, no inline DSN or layer mode). See [Databases → Propulsion](/basics/databases/#propulsion).
 
 <Aside type="note" title="PDO stays in the core">

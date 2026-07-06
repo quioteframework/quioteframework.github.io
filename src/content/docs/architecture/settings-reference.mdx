@@ -152,7 +152,7 @@ A few settings deliberately live outside `core.` — in XML they need a `<settin
 | `routing.http_method_map` | `[]` | Overrides the HTTP-verb → action-method map. See [Routing](/basics/routing/#customising-the-http-verb-mapping). |
 | `validation.reject_unknown_parameters` | `'throw'` | Compile-time handling of an unknown validator parameter: `'throw'`, `'warn'`, or `'off'`. See [Input validation](/basics/validation/) and [Advanced validation](/advanced/advanced-validation/). |
 | `telemetry.*` | off | OpenTelemetry tracing/metrics — `telemetry.enabled`, `telemetry.exporter`, `telemetry.sampling.*`, `telemetry.spans.*`, and more. The full table is on the [Telemetry](/architecture/telemetry/) page. |
-| `plugins` | `[]` | List of plugin class-strings to register at boot (a **bare** key — in XML use `prefix=""`). See [Plugins and extensibility](/architecture/plugins/). |
+| `plugins` | `[]` | The registry `Config/plugins.*` and `PluginManager::add()` write to at boot. Not a supported `settings.*` key to write directly — declare plugins in `Config/plugins.php`/`.xml`/`.yaml` instead. See [Plugins and extensibility](/architecture/plugins/). |
 
 ### Telemetry
 

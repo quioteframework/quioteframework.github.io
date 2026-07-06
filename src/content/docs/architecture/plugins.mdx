@@ -15,15 +15,17 @@ Plugins aren't just for your code — **many subsystems have been extracted from
 
 ## Writing a plugin
 
-Implement `Quiote\Plugin\PluginInterface` — a name, and a `register()` that receives a `PluginRegistrar`:
+Implement `Quiote\Plugin\PluginInterface` — a name, and a `register()` that receives a `PluginRegistrar` — and mark the class with `#[Quiote\Plugin\Attribute\Plugin]`:
 
 ```php
 <?php
 namespace App\Plugin;
 
 use Quiote\Plugin\{PluginInterface, PluginRegistrar};
+use Quiote\Plugin\Attribute\Plugin;
 use Quiote\DI\Container;
 
+#[Plugin]
 final class HealthPlugin implements PluginInterface
 {
     public function name(): string
@@ -42,6 +44,12 @@ final class HealthPlugin implements PluginInterface
 }
 ```
 
+<Aside type="caution" title="`#[Plugin]` is mandatory for class-string activation">
+Naming a class in `plugins.*` (or passing a class-string to `PluginManager::add()`) is **not, by itself, enough to activate it** — the class must also carry `#[Plugin]`. Without it, `PluginManager::instantiate()` refuses (logs, returns `null`) and the plugin never runs, even if it's correctly named in `plugins.php`. This is a deliberate supply-chain safeguard: merely `composer require`-ing a package can never activate anything in it, because the class itself must have already opted in at authoring time.
+
+The check is **skipped** for `PluginManager::add(new HealthPlugin())` — passing an already-constructed instance is itself the trust boundary, since your own code named the class directly rather than routing it through a string that could originate from a config file. All official `quioteframework/*` plugin packages already carry the attribute — see [Official packages](/plugins/official-packages/).
+</Aside>
+
 `register()` is called **once at boot**. Each `PluginRegistrar` method is fluent (returns `$this`) and maps to an existing seam:
 
 | Method | Contributes | Routes to |
@@ -49,52 +57,56 @@ final class HealthPlugin implements PluginInterface
 | `configDefault($key, $value)` | A config default (set-if-absent) | `Config::set(…, overwrite: false)` |
 | `service($id, $concrete, $scope, ...$aliases)` | A DI service (per container, if not already bound) | `Container::set()` |
 | `middleware($fqcn, $factory, $after, $before, $priority)` | Middleware at a position | `MiddlewareCatalog::register()` |
-| `attributedMiddleware($fqcn)` | An attribute-ordered middleware | `MiddlewareCatalog::registerAttributed()` |
+| `attributedMiddleware($fqcn, $factory?)` | An attribute-ordered middleware | `MiddlewareCatalog::registerAttributed()` |
 | `listen($eventClass, $listener, $priority)` | An event listener | `Events::listen()` |
 | `moduleDirectory($dir)` | A module dir for `#[Route]` scanning | route scanner default set |
 | `command($fqcn)` | A console command | console registry |
 | `httpClient($name, $configurator)` | A named HTTP client | `HttpClientFactory::configure()` |
 | `databaseDriver($alias, $adapterClass)` | A database adapter alias | `DatabaseDriverRegistry` (see [Databases](/basics/databases/)) |
+| `developerExceptionRenderer($factory)` | The developer-mode exception renderer (set-if-absent) | `ExceptionRendererRegistry::setDeveloperRenderer()` |
 
 ## Registering a plugin
 
-Two ways. **Declaratively**, via the `plugins` config key (a list of plugin class-strings):
+Two ways. **The correct, documented way** is a dedicated `Config/plugins.{xml,php,yaml,yml}` file (`Quiote\Config\PluginConfigHandler`) — a flat, ordered enable/disable list, resolved like any other config type (`.php` > `.yaml`/`.yml` > `.xml`):
 
 <Tabs syncKey="config-format">
 <TabItem label="PHP">
 
 ```php
-// Config/settings.php
-'plugins' => [
-    \App\Plugin\HealthPlugin::class,
-],
+// Config/plugins.php
+return [
+    ['class' => \App\Plugin\HealthPlugin::class, 'enabled' => true],
+];
 ```
 
 </TabItem>
 <TabItem label="YAML">
 
 ```yaml
-# Config/settings.yaml
-plugins:
-  - App\Plugin\HealthPlugin
+# Config/plugins.yaml
+- class: App\Plugin\HealthPlugin
+  enabled: true
 ```
 
 </TabItem>
 <TabItem label="XML">
 
 ```xml
-<!-- Config/settings.xml — prefix="" keeps the key as `plugins`, not `core.plugins` -->
-<settings prefix="">
-  <setting name="plugins">
-    <ae:parameter>App\Plugin\HealthPlugin</ae:parameter>
-  </setting>
-</settings>
+<!-- Config/plugins.xml -->
+<ae:configurations xmlns:ae="http://quiote.dev/quiote/config/global/envelope/1.1"
+                    xmlns="http://quiote.dev/quiote/config/parts/plugins/1.1">
+    <ae:configuration>
+        <plugin class="App\Plugin\HealthPlugin" />
+    </ae:configuration>
+</ae:configurations>
 ```
 
 </TabItem>
 </Tabs>
 
-`plugins` is a bare (non-`core.`) key, so the XML form needs `prefix=""` on the `<settings>` wrapper (see [Configuration → The XML `prefix` attribute](/architecture/configuration/#the-xml-prefix-attribute)).
+`enabled` (PHP/YAML) / the `enabled="…"` attribute (XML) defaults to `true` when omitted, so a bare `['class' => ...]` entry is enough to turn a plugin on; set it to `false` to declare a class without activating it.
+
+This is a **drop-in**, the same way [declarative `middleware.xml`](/advanced/custom-middleware/#declarative-middlewarexml) is: any module's own `Config/` directory can carry its own `Config/plugins.*` (discovered by `Quiote::bootstrap()` globbing `core.module_dir`, no app wiring required), so a module registers its own plugins just by containing the file. Per-plugin options still live in `settings.*` (contributed by the plugin via `configDefault()`) — `plugins.*` only controls which plugins run and in what order. App-declared plugins are compiled first, so if the same class is declared by both the app and a module, the app's declaration wins.
 
 Or **programmatically**, before the kernel runs:
 
@@ -107,7 +119,11 @@ PluginManager::add(App\Plugin\HealthPlugin::class);
 Quiote\Runtime\Kernel::create([/* ... */])->run();
 ```
 
-Either way, `register()` runs during `Quiote::bootstrap()` — **after settings load, before contexts are created** — in deterministic order (config order, then `add()` order), de-duplicated by class.
+Either way, `register()` runs during `Quiote::bootstrap()` — **after settings load, before contexts are created** — in deterministic order (config order, then `add()` order), de-duplicated by class. A class-string reaching either path must carry `#[Plugin]` (see above) or it's silently refused.
+
+<Aside type="note" title="A settings.* `plugins` key happens to work — don't rely on it">
+`plugins.xml` and `PluginManager::add()` both ultimately land in the same `plugins` config key/registry, so a `<setting name="plugins">` entry (or a `'plugins' => [...]` line) inside `settings.*` happens to work too. That's an incidental consequence of the shared storage, not a supported interface — it's intentionally undocumented anywhere else, and the scaffolder and every example in this repo only ever write to `Config/plugins.*`. Use the dedicated file.
+</Aside>
 
 ## Ordering and override rules
 
@@ -135,3 +151,5 @@ Two of the framework features the plugin system leans on are documented in their
 - **[HTTP client](/basics/http-client/)** — named clients a plugin can pre-configure (`$r->httpClient(...)`).
 
 Together these are the backbone of the "unopinionated core, opinionated drop-ins" design: the core stays lean, and anything with an opinion — an auth provider, health checks, a mailer — ships as a plugin you choose to add.
+
+For copy-pasteable steps through the most common tasks — enabling a database adapter, turning on the Whoops error page, writing your own plugin or middleware — see the [Plugins & middleware quickstart](/plugins/quickstart/).
