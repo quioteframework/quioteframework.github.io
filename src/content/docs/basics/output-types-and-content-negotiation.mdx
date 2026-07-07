@@ -182,7 +182,7 @@ class PostSuccessView extends View
     {
         $this->loadLayout();
         $this->setAttribute('pageTitle', 'Post');
-        // returns null → the loaded template layers render
+        // returns null: the loaded template layers render
     }
 
     public function executeJson(WebRequest $rd)
@@ -190,7 +190,7 @@ class PostSuccessView extends View
         return json_encode([
             'post' => $this->getAttribute('post'),
         ]);
-        // returns a string → that string is the response body
+        // returns a string: that string is the response body
     }
 }
 ```

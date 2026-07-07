@@ -90,6 +90,10 @@ final class ShowPostFlowTest extends TestCase
 
 Because this runs the actual middleware, it catches wiring problems a unit test wouldn't — security decisions, validation pruning, view resolution.
 
+:::caution[Exercise the error path too, not just the happy path]
+A custom middleware that reads or modifies the response (adding a header, say) can pass every happy-path assertion and still silently do nothing on an error response, if it's positioned relative to `ErrorHandlingMiddleware` incorrectly — see [Writing custom middleware: ErrorHandlingMiddleware placement](/advanced/custom-middleware/#errorhandlingmiddleware-before-and-after-are-not-symmetric). When you write a flow test for a new middleware that touches the response, add a second case that dispatches to a route that throws and assert your middleware's effect still shows up on the resulting error response — not just the 200 case.
+:::
+
 ## The fragment harness
 
 The framework also ships focused base classes for testing a single MVC fragment in isolation, without going through routing:

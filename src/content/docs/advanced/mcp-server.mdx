@@ -1,0 +1,187 @@
+---
+title: Exposing your app as an MCP server
+description: Turn a Quiote app into a Model Context Protocol server — actions-as-tools, attribute discovery, transports, and auth.
+---
+
+import { Tabs, TabItem, Aside } from '@astrojs/starlight/components';
+
+`quioteframework/mcp` turns a Quiote app into a [Model Context Protocol](https://modelcontextprotocol.io) server, so an AI agent can call your app's capabilities as **tools**, read its data as **resources**, and use **prompts**. It's built on the official [PHP MCP SDK](https://github.com/modelcontextprotocol/php-sdk) (`mcp/sdk`) rather than reimplementing the protocol — Quiote owns the binding (transports, DI, attribute discovery, auth), the SDK owns the wire format.
+
+<Aside type="caution" title="Partially implemented">
+This is a newer, actively-developed capability. stdio and HTTP transports, manual registration, plain-class attribute discovery (with a warmable cache), and the actions-as-tools bridge with validator-derived input schemas are implemented and tested. OTel spans per call, OAuth 2.1, RBAC-gated tool listing, rate limiting, resource/prompt attribute discovery, and the stateless `2026-07-28` transport mode are not — see [What isn't built yet](#what-isnt-built-yet).
+</Aside>
+
+The [Quiote Assistant MCP](/getting-started/mcp-assistant/) is a full reference app built on this package — read it alongside this page if you want a complete, working example rather than just the mechanism.
+
+## Enabling it
+
+```bash
+composer require quioteframework/mcp
+```
+
+<Tabs syncKey="config-format">
+<TabItem label="PHP">
+
+```php
+// Config/plugins.php
+return [
+    ['class' => \Quiote\Mcp\McpPlugin::class, 'enabled' => true],
+];
+```
+
+</TabItem>
+<TabItem label="YAML">
+
+```yaml
+# Config/plugins.yaml
+- class: Quiote\Mcp\McpPlugin
+  enabled: true
+```
+
+</TabItem>
+<TabItem label="XML">
+
+```xml
+<!-- Config/plugins.xml -->
+<ae:configurations xmlns:ae="http://quiote.dev/quiote/config/global/envelope/1.1"
+                    xmlns="http://quiote.dev/quiote/config/parts/plugins/1.1">
+    <ae:configuration>
+        <plugin class="Quiote\Mcp\McpPlugin" />
+    </ae:configuration>
+</ae:configurations>
+```
+
+</TabItem>
+</Tabs>
+
+```php
+// Config/settings.php
+'mcp.enabled' => true,
+```
+
+`McpPlugin` publishes every `mcp.*` default (all opt-in-safe — `mcp.enabled` itself defaults to `false`), registers the `mcp:serve`/`mcp:warmup` console commands, and — only when `http` is in `mcp.transports` — splices `McpEndpointMiddleware` (and, unless `mcp.auth = 'none'`, `McpAuthMiddleware` ahead of it) into the pipeline just before `SecurityMiddleware`. See [Settings reference](#settings-reference) for the full key set.
+
+## Three ways to register a capability
+
+`Quiote\Mcp\McpCatalog` is a static, process-global registry of tools/resources/prompts (the same pattern as `MiddlewareCatalog`/`DatabaseDriverRegistry`), fed from three sources:
+
+1. **Manual registration** — any plugin's `register()` calls `McpCatalog::addTool()`/`addResource()`/`addPrompt()` directly. There's no `PluginRegistrar` convenience method for this (a generic registrar shouldn't grow a method per optional package) — depend on `quioteframework/mcp` and call `McpCatalog` yourself.
+2. **Attribute discovery on plain classes** — opt in with `mcp.discover_attributes`, and Quiote scans one `{Module}/Mcp/` subdirectory per module (across `core.module_dir` plus every plugin's contributed module directories) for classes carrying the SDK's own `#[McpTool]`, `#[McpResource]`, `#[McpPrompt]`, or `#[McpResourceTemplate]` attributes — delegating the actual scan to the SDK's `Mcp\Capability\Discovery\Discoverer` rather than reimplementing attribute scanning.
+3. **Existing `#[Route]` actions exposed as tools** — the headline feature, below.
+
+### The killer feature: `#[McpTool]` on an existing action
+
+Add the SDK's `#[McpTool]` attribute to an action that already carries `#[Route]`, and set `mcp.expose_actions = true`:
+
+```php
+<?php
+namespace App\Modules\Blog\Actions;
+
+use Mcp\Capability\Attribute\McpTool;
+use Quiote\Action\Action;
+use Quiote\Request\WebRequest;
+use Quiote\Routing\Attribute\Route;
+
+#[Route('/posts/{id}', name: 'post_show')]
+#[McpTool(name: 'get_post', description: 'Fetch a blog post by id.')]
+class PostAction extends Action
+{
+    public function executeRead(WebRequest $rd)
+    {
+        // unchanged — the same action still serves real HTTP requests
+    }
+}
+```
+
+`Quiote\Mcp\Compiler\ActionToolScanner` finds every route-carrying action additionally decorated with `#[McpTool]`. Each match is wired via `Quiote\Mcp\Bridge\ActionToolAdapter`, which drives a synthetic request through **`Context::handle()`** — the same entry point a real HTTP request goes through, not `ActionExecutor::execute()` directly — so the tool call gets the exact same DI resolution, verb dispatch (`executeRead`/`executeWrite`/…), and validation a normal request would get, for free. Path parameters are split from extra arguments using the route's own compiled path variables; extra arguments ride as query params (`GET`/`HEAD`) or a JSON body otherwise. A non-2xx response or any exception surfaces as a tool error (`isError: true`), not a JSON-RPC protocol error.
+
+### Input schema, derived from your validators
+
+`Quiote\Mcp\Compiler\ValidatorSchemaMapper` turns the action's existing `{module}/Validate/{action}.xml` validator rules — scoped to whichever verb the route actually dispatches to — into the tool's `inputSchema`, so a schema-violating `tools/call` is rejected before your action ever runs:
+
+| Validator | Maps to |
+|---|---|
+| String | `minLength`/`maxLength` |
+| Number | `integer`/`number` + `minimum`/`maximum` |
+| Email | `format: email` |
+| Inarray | `enum` |
+| Regex | `pattern` (positive, unflagged matches only) |
+| Boolean, Json, DateTime, IsNotEmpty | mapped |
+| `required` flag | reflected in the schema's `required` list |
+
+This is deliberately **descriptive, not a faithful re-encoding** — the schema always keeps `additionalProperties: true`, operator groups (`and`/`or`/`not`/`xor`) flatten to a union of their fields rather than `allOf`/`anyOf`, and anything unmappable (a negative/flagged regex, an unrecognized validator class) degrades to a looser description instead of being dropped. Real enforcement still happens when the action's validators run again during dispatch — this schema is a pre-dispatch filter, not a replacement for it. If an action has no XML validator file (e.g. it validates via a hand-written fluent builder), parsing fails, or nothing describable comes out, the tool falls back to a permissive `{"type":"object","properties":{},"additionalProperties":true}` schema. Output schema, if you want one, comes through as-is from `#[McpTool(outputSchema: ...)]` — nothing is derived automatically from the route's `outputType`.
+
+## Transports
+
+### stdio
+
+```bash
+php bin/quiote mcp:serve
+```
+
+The default (`mcp.transports = ['stdio']`) and the simplest to ship — no HTTP surface, no auth, what a local client (Claude Desktop, an IDE) launches as a subprocess.
+
+### Streamable HTTP
+
+Add `'http'` to `mcp.transports` to register `Quiote\Mcp\Middleware\McpEndpointMiddleware` in the pipeline, listening on `mcp.path` (default `/mcp`). It sits *before* `SecurityMiddleware` — MCP does its own bearer/token auth, not session credentials — reads the already-parsed JSON body, and returns transport-level errors as [Problem Details](/architecture/error-handling/) with JSON-RPC error objects for protocol-level failures.
+
+```php
+// Config/settings.php
+'mcp.transports' => ['stdio', 'http'],
+```
+
+Only the stateful `2025-11-25` protocol mode is implemented (`mcp.protocol_version` defaults to it); the installed SDK version's `StreamableHttpTransport` doesn't implement GET/SSE streaming at all, only `OPTIONS`/`POST`/`DELETE`. `mcp.stateless` exists as a config knob for the forthcoming stateless `2026-07-28` mode but that mode isn't implemented yet — see [What isn't built yet](#what-isnt-built-yet).
+
+## Auth
+
+The HTTP endpoint is safe by default: with no `mcp.auth_token` configured, `Quiote\Mcp\Auth\StaticTokenAuthenticator` **rejects every request** rather than silently allowing them through. Set a token, typically from the environment:
+
+```php
+// Config/settings.php
+'mcp.auth_token' => getenv('QUIOTE_MCP_TOKEN') ?: null,
+```
+
+For a trusted network, or a reverse proxy that already authenticates, `mcp.auth = 'none'` is the explicit escape hatch (and skips registering `McpAuthMiddleware` at all). There's no OAuth 2.1 or RBAC-gated tool listing yet — see below.
+
+## Discovery caching
+
+Scanning `{Module}/Mcp/` directories for attributed classes on every `McpServer::build()` is wasted work once you're past development. With `mcp.discover_attributes` on, `mcp.discovery_cache` (default `true`) backs discovery with a file-based PSR-16 cache (`Symfony\Component\Cache\Adapter\FilesystemAdapter`, under `{core.cache_dir}/mcp-discovery`), and `mcp:warmup` pre-populates it offline, ahead of a worker or process starting:
+
+```bash
+php bin/quiote mcp:warmup
+```
+
+This only affects plain-class attribute discovery — the actions-as-tools scan (`ActionToolScanner`) isn't yet covered by `cache:warmup`/`mcp:warmup` and still scans lazily per `McpServer::build()`.
+
+## Settings reference
+
+| Key | Default | Effect |
+|---|---|---|
+| `mcp.enabled` | `false` | Master switch. |
+| `mcp.transports` | `['stdio']` | Any of `stdio`, `http`. |
+| `mcp.path` | `'/mcp'` | HTTP endpoint path (only relevant with `http` transport). |
+| `mcp.protocol_version` | `'2025-11-25'` | Advertised MCP protocol version. |
+| `mcp.stateless` | `true` | Reserved for the `2026-07-28` stateless HTTP mode — not yet implemented. |
+| `mcp.server_name` | `'quiote-app'` | Advertised server name. |
+| `mcp.server_version` | `'1.0.0'` | Advertised server version. |
+| `mcp.auth` | `'bearer'` | `'bearer'` or `'none'`. |
+| `mcp.auth_token` | `null` | Required for `'bearer'` auth to accept any request. |
+| `mcp.expose_actions` | `false` | Scan `#[Route]` actions for `#[McpTool]`. |
+| `mcp.module_dirs` | `[]` | Extra scan roots; defaults to `core.module_dir` + plugin module directories. |
+| `mcp.discover_attributes` | `false` | Scan plain (non-`#[Route]`) classes under `{Module}/Mcp/` for SDK attributes. |
+| `mcp.discovery_cache` | `true` | Cache attribute discovery (only takes effect when `mcp.discover_attributes` is on). |
+
+## What isn't built yet
+
+Being direct about the gaps, since this feature is still filling in:
+
+- **OTel spans per tool/resource/prompt call** and bridging MCP `logging` notifications to `Quiote\Logging\Log` — not implemented.
+- **OAuth 2.1 resource-server auth** (the enterprise auth story) — only bearer-token auth exists today.
+- **RBAC-gated tool listing** — a caller's roles don't yet filter which tools `tools/list` returns.
+- **Rate limiting** on the HTTP endpoint — not implemented.
+- **Resource/prompt attribute discovery** — attribute discovery (§ above) covers tools; resources and prompts still require manual `McpCatalog` registration.
+- **Stateless HTTP (`2026-07-28`)** — `mcp.stateless` is a config placeholder; the transport itself is still stateful `2025-11-25` only.
+
+## Verifying it works
+
+Drive `mcp:serve` with a real MCP client, or call `McpCatalog::tools()`/`resources()`/`prompts()` directly in a test to assert what's registered. The [Quiote Assistant MCP](/getting-started/mcp-assistant/#verifying-it-works) ships real subprocess/HTTP smoke-test clients you can use as a template for testing your own server.

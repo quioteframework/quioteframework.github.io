@@ -77,7 +77,7 @@ class ShowPostAction extends Action
 
     public function cacheTtlSeconds(?string $outputType = null): ?int
     {
-        return $outputType === 'rss' ? 600 : 60;   // null → default 300s
+        return $outputType === 'rss' ? 600 : 60;   // null = default 300s
     }
 
     public function executeRead(WebRequest $rd)

@@ -36,7 +36,7 @@ Both app-aware commands accept:
 | `--app-dir` | `$QUIOTE_APP_DIR`, else an upward search | Path to the application directory. |
 | `--env` | `$QUIOTE_ENV`, else `development` | Environment to bootstrap. |
 
-**App-directory resolution order:** `--app-dir` → `$QUIOTE_APP_DIR` → an upward search from the current directory for a `Config/settings.*` file. If none is found, the command errors and tells you to pass `--app-dir`, set `$QUIOTE_APP_DIR`, or run from inside an app directory. In practice, running the command from your project root just works.
+**App-directory resolution order:** `--app-dir`, then `$QUIOTE_APP_DIR`, then an upward search from the current directory for a `Config/settings.*` file. If none is found, the command errors and tells you to pass `--app-dir`, set `$QUIOTE_APP_DIR`, or run from inside an app directory. In practice, running the command from your project root just works.
 
 ## `new` — scaffold an application
 

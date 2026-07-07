@@ -64,7 +64,7 @@ Message translation accepts positional parameters, applied with `vsprintf`:
 $t->_('Hello, %s — you have %d messages', null, null, [$name, $count]);
 ```
 
-The `$domain` argument selects a translation domain; a leading `.` prefixes the default domain (`.errors` → `default.errors`). Domains are hierarchical — a lookup for `default.errors.Login` falls back up to `default.errors`, then `default`, until a translator is found. Passing a `$locale` translates in that locale for one call without changing the current one.
+The `$domain` argument selects a translation domain; a leading `.` prefixes the default domain (`.errors` becomes `default.errors`). Domains are hierarchical — a lookup for `default.errors.Login` falls back up to `default.errors`, then `default`, until a translator is found. Passing a `$locale` translates in that locale for one call without changing the current one.
 
 ## The translation catalog
 
@@ -164,7 +164,8 @@ translators:
         <currency_formatter>
           <ae:parameter name="currency_code">EUR</ae:parameter>
         </currency_formatter>
-        <date_formatter type="datetime">
+        <date_formatter>
+          <ae:parameter name="type">datetime</ae:parameter>
           <ae:parameter name="format">medium</ae:parameter>
         </date_formatter>
       </translator>
@@ -188,9 +189,35 @@ Two message translators ship:
 - **`GettextTranslator`** — reads gettext `.mo` files. Full plural support (it parses the `Plural-Forms` header), so `__()` works. Configure `text_domains` to map each domain to a directory of catalogs.
 - **`SimpleTranslator`** — translations declared inline in config (`params[domain][locale][from] = to`). No plural support — `__()` with this translator throws.
 
+#### SimpleTranslator's message shape: flat vs. domain-nested
+
+For the common case — a translator with no sub-domains of its own — key `params` directly by locale, with no domain wrapper at all:
+
+```php
+'params' => [
+    'en_US' => ['Welcome' => 'Welcome'],
+],
+```
+
+`SimpleTranslator::initialize()` auto-detects this **flat** shape: if every top-level key parses as a valid locale identifier, it's treated as if wrapped in a single `''`-keyed domain. This is the shape to reach for by default.
+
+The **domain-nested** shape (`domain => locale => key/translation`) is still there for translators that have real sub-domains, and it comes with a sharp edge worth knowing about even though you'll only need it for nesting: `TranslationManager` resolves a domain by progressively stripping trailing `.segment` parts until a registered translator matches, then passes whatever's *left over* — not the matched translator's own name — as the domain argument to `translate()`. A translator nested inside another (e.g. declared with domain `default.errors`) keys its own messages by the exact suffix left over after the parent is matched:
+
+```php
+'params' => [
+    'errors' => ['en_US' => ['not_found' => 'Not found.']],
+],
+```
+
+If you're not nesting translators, prefer the flat shape above — it sidesteps this leftover-suffix mechanic entirely. The domain-nested shape's degenerate, no-nesting case (keying by `''` instead of the translator's own declared domain name) still works, but the flat shape is the same thing spelled the way you'd actually guess it. See `SimpleTranslator::initialize()`'s docblock for the full mechanics if you're debugging a specific domain-resolution path.
+
 ### Formatters
 
 `QuioteNumberFormatter`, `CurrencyFormatter`, and `DateFormatter` wrap `intl`'s `NumberFormatter` and `IntlDateFormatter`. They pick grouping/decimal separators and patterns from the current locale, and accept a `format` parameter (a pattern, a per-locale map, or a named specifier). `DateFormatter` takes `type` (`date` / `time` / `datetime`) and a `format` that can be `full`, `long`, `medium`, or `short`.
+
+:::caution[`type`/`format` are `<ae:parameter>` children, never bare XML attributes]
+`<date_formatter type="datetime" format="long" />` looks reasonable but **silently no-ops** — `DateFormatter::initialize()` only ever reads `type`/`format` from its `$parameters` array, which in XML means `<ae:parameter>` children, the same shape every other Quiote config block uses (`<validator>`, `<factory>`, and so on). Bare XML attributes on `<date_formatter>` are never read at all: no error, no exception, the formatter just silently falls back to its defaults, and the mistake only surfaces when the output doesn't match what the attribute values implied. Use `<ae:parameter name="type">datetime</ae:parameter>` inside the element, as shown above.
+:::
 
 ## Choosing and switching the locale
 

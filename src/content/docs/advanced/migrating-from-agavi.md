@@ -23,17 +23,17 @@ Agavi's flat class names (`Blog_PostAction`) become PSR-4 namespaced classes (`A
 
 You don't have to rename everything at once: when it can't find the namespaced class, the controller falls back to the old flat name and includes the file by path. That fallback is what lets you carry an Agavi module across, get it running, and namespace its classes incrementally.
 
-### factories.xml → the DI container
+### factories.xml becomes the DI container
 
 Agavi wired collaborators through `factories.xml` and context lookups. Quiote keeps a `factories` config for framework roles (`controller`, `response`, `routing`, `user`, `storage`, …) but new application code uses the [DI container](/architecture/container/): declare dependencies as constructor parameters and let the container autowire them. The old "reach through the context to find a model" pattern becomes constructor injection.
 
 This is also where the **model** concept splits. Agavi used "model" for two things — singleton service objects and transient data objects. Quiote un-conflates them: behaviour goes in [services](/basics/services-and-models/) (container-managed), data stays in models (`getModel()`). Your Agavi singleton "models" are, in Quiote terms, services.
 
-### Filter chain → middleware pipeline
+### Filter chain becomes the middleware pipeline
 
 Agavi's execution filters are gone — the legacy execution-filter hooks throw if called. Their job is done by an explicit [middleware pipeline](/architecture/middleware-pipeline/): routing, security, validation, CSRF, dispatch, and the rest are each a named middleware in an ordered list you can print. Cross-cutting logic that was an Agavi filter becomes a [custom middleware](/advanced/custom-middleware/).
 
-### routing.xml → `Routing::build()` and `#[Route]`
+### routing.xml becomes `Routing::build()` and `#[Route]`
 
 Routes are defined in a routing class (`Routing::build()`) and/or with `#[Route]` attributes on actions, merged together. The old `routing.xml` handler is not wired. See [Routing](/basics/routing/).
 

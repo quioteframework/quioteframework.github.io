@@ -134,7 +134,7 @@ public function executeRead(WebRequest $rd)
 }
 ```
 
-Because parameter access is whitelist-enforced under strict validation, a route parameter you read should be covered by a validator or accessed with a default. See [Validation](/basics/validation/).
+Parameter access is whitelist-enforced under strict validation (see [Validation](/basics/validation/)), but route placeholders get a free pass on that whitelist: promoting `{slug}` from the matched route into a request parameter goes through `WebRequest::setParameter()`, which auto-whitelists whatever it sets. That means `getParameter('slug')` works even with no validator declared for `slug` at all — route params reach a non-`isSimple()` action without ever passing through a real validator. This is a known, tracked gap, not a documented guarantee: still declare a real validator for a route parameter if you need type/format/range checking (an `{id}` you expect to be numeric, say), since the free whitelist entry says nothing about the value's shape.
 
 ## Customising the HTTP verb mapping
 
@@ -158,7 +158,7 @@ return [
     // ...
     'routing.http_method_map' => [
         'PATCH' => 'write',   // route PATCH to executeWrite instead of executeUpdate
-        'LOCK'  => 'lock',    // add a non-standard verb → executeLock()
+        'LOCK'  => 'lock',    // adds a non-standard verb, calling executeLock()
     ],
 ];
 ```
@@ -170,7 +170,7 @@ return [
 # Config/settings.yaml
 routing.http_method_map:
   PATCH: write    # route PATCH to executeWrite instead of executeUpdate
-  LOCK: lock      # add a non-standard verb → executeLock()
+  LOCK: lock      # adds a non-standard verb, calling executeLock()
 ```
 
 </TabItem>
@@ -200,8 +200,8 @@ Config::set('routing.http_method_map', ['LOCK' => 'lock']);
 Rules:
 
 - **Keys** (verbs) are matched case-insensitively; **values** (tokens) are lowercased.
-- The token becomes the method name, `ucfirst`-ed: token `lock` → `executeLock()`. Any action meant to handle that verb needs the matching method.
-- The token also names the per-method validation hooks — token `lock` → `registerLockValidators()`, `validateLock()`, `handleLockError()` (see [Validation](/basics/validation/)).
+- The token becomes the method name, `ucfirst`-ed: token `lock` calls `executeLock()`. Any action meant to handle that verb needs the matching method.
+- The token also names the per-method validation hooks — token `lock` maps to `registerLockValidators()`, `validateLock()`, `handleLockError()` (see [Validation](/basics/validation/)).
 - An unmapped verb falls back to the `read` token.
 
 Note the XML tab: a `routing.*` key needs the `prefix` attribute on the enclosing `<settings>` element, because a bare `<setting>` compiles to a `core.` key — see [The XML `prefix` attribute](/architecture/configuration/#the-xml-prefix-attribute). The [Actions and views](/architecture/actions-and-views/) page describes how the resolved method is called.
@@ -212,5 +212,5 @@ The routing object generates URLs in reverse from a route name and parameters vi
 
 ```php
 $url = $this->getContext()->getRouting()->gen('post', ['slug' => 'hello-world']);
-// → /blog/hello-world
+// resolves to /blog/hello-world
 ```

@@ -12,8 +12,8 @@ flowchart TD
     A[HTTP request] --> B["Kernel::run()"]
     B --> C["Context::handle(request)"]
     C --> D[MiddlewarePipeline]
-    D --> E[ErrorHandling → Session → ContentNegotiation → Routing → CSRF → Security → Validation → Dispatch → ...]
-    E --> F["DispatchMiddleware → ActionExecutor"]
+    D --> E[ErrorHandling, Session, ContentNegotiation, Routing, CSRF, Security, Validation, Dispatch, ...]
+    E --> F["DispatchMiddleware calls ActionExecutor"]
     F --> G["Action: executeRead / executeWrite"]
     G --> H["View: executeHtml / executeJson"]
     H --> I[Renderer + template]
@@ -84,7 +84,7 @@ Back in the kernel, `HttpEmitter::emit($response)` writes the PSR-7 response to 
 
 Not every request runs the full path:
 
-- **Simple actions** (`isSimple()` returns true) skip validation and take a lighter path through `DispatchMiddleware`.
+- **Simple actions** (`isSimple()` returns true) skip execution entirely, not just validation — no `execute*()`, `validate()`, or `registerValidators()` runs, and `DispatchMiddleware` renders `getDefaultViewName()` directly. See [Actions and views](/architecture/actions-and-views/#issimple-means-no-action-code-runs-at-all).
 - **Non-simple actions** require a completed validation decision before dispatch; if validation is missing, dispatch fails loudly rather than running unvalidated.
 
 This is the safety default described in [Validation](/basics/validation/): an action that expects input does not run until that input has been validated.

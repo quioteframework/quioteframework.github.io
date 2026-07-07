@@ -92,7 +92,7 @@ core.use_translation: false
 | `core.namespace_prefix` | `'App'` | Base PHP namespace for resolving models, modules, and attribute-routed actions. |
 | `core.available` | `true` | Application availability flag. |
 | `core.debug` | `false` | Debug mode. When true, config is recompiled from source on each load rather than trusting a stale compiled cache. |
-| `core.developer_exceptions` | `false` | `true` → detailed Whoops error page; `false` → safe generic response. Independent of `core.debug`. See [ErrorHandlingMiddleware](/architecture/middleware-reference/#errorhandlingmiddleware). |
+| `core.developer_exceptions` | `false` | `true` selects the detailed Whoops error page; `false` the safe generic response. Independent of `core.debug`. See [ErrorHandlingMiddleware](/architecture/middleware-reference/#errorhandlingmiddleware). |
 | `core.environment` | — (required) | Environment name; supplied via the kernel (`env`) or bootstrap. Becomes readonly once set. |
 | `core.default_context` | `'web'` | Default context/profile name (falls back to the `QUIOTE_CONTEXT` env var). |
 | `core.context_implementation` | `Context` | A `Context` subclass to instantiate instead of the base class. |
@@ -126,7 +126,7 @@ Both keys are read by [DispatchMiddleware](/architecture/middleware-reference/#d
 | `core.send-nosniff-header` | `true` | Whether `X-Content-Type-Options: nosniff` is added when absent. |
 | `core.expose_quiote_version` | `ini_get('expose_php')` | If truthy, `X-Powered-By` includes the framework version; otherwise just the name. |
 | `core.trusted_hosts` | `[]` (no restriction) | Host-header allowlist (array value). Entries wrapped in `/…/` are regexes; others match case-insensitively. A non-matching `Host` is replaced with the first literal entry. |
-| `core.correlation_id.header` | `'X-Correlation-Id'` | Inbound header adopted as the request's correlation id (sanitized, length-capped); absent → one is generated. Echoed back on the response. See [Logging → Correlation IDs](/architecture/logging/#correlation-ids). |
+| `core.correlation_id.header` | `'X-Correlation-Id'` | Inbound header adopted as the request's correlation id (sanitized, length-capped); if absent, one is generated. Echoed back on the response. See [Logging: Correlation IDs](/architecture/logging/#correlation-ids). |
 | `core.correlation_id.expose` | `true` | Whether the correlation id is echoed back on the response under the same header. |
 
 The response-header keys (`disable-framework-headers`, `cache-hit-header`, `send-nosniff-header`) are read by [DispatchMiddleware](/architecture/middleware-reference/#dispatchmiddleware).
@@ -135,8 +135,8 @@ The response-header keys (`disable-framework-headers`, `cache-hit-header`, `send
 
 Full documentation for these lives elsewhere — this table is the index:
 
-- **CSRF** — the complete `core.csrf.*` set: [Middleware reference → CsrfValidationMiddleware](/architecture/middleware-reference/#csrfvalidationmiddleware); usage and per-route opt-out: [Authentication & authorization → CSRF](/advanced/authentication-authorization/#csrf-protection).
-- **Validation** — how validators run and the error response: [Middleware reference → ValidationMiddleware](/architecture/middleware-reference/#validationmiddleware) and [Input validation](/basics/validation/).
+- **CSRF** — the complete `core.csrf.*` set: [Middleware reference: CsrfValidationMiddleware](/architecture/middleware-reference/#csrfvalidationmiddleware); usage and per-route opt-out: [Authentication & authorization: CSRF](/advanced/authentication-authorization/#csrf-protection).
+- **Validation** — how validators run and the error response: [Middleware reference: ValidationMiddleware](/architecture/middleware-reference/#validationmiddleware) and [Input validation](/basics/validation/).
 
 | Key | Default | Effect |
 |---|---|---|
@@ -145,13 +145,14 @@ Full documentation for these lives elsewhere — this table is the index:
 
 ### Keys under other prefixes
 
-A few settings deliberately live outside `core.` — in XML they need a `<settings prefix="…">` wrapper (see [Configuration → The XML `prefix` attribute](/architecture/configuration/#the-xml-prefix-attribute)):
+A few settings deliberately live outside `core.` — in XML they need a `<settings prefix="…">` wrapper (see [Configuration: The XML `prefix` attribute](/architecture/configuration/#the-xml-prefix-attribute)):
 
 | Key | Default | Effect |
 |---|---|---|
-| `routing.http_method_map` | `[]` | Overrides the HTTP-verb → action-method map. See [Routing](/basics/routing/#customising-the-http-verb-mapping). |
+| `routing.http_method_map` | `[]` | Overrides the HTTP-verb-to-action-method map. See [Routing](/basics/routing/#customising-the-http-verb-mapping). |
 | `validation.reject_unknown_parameters` | `'throw'` | Compile-time handling of an unknown validator parameter: `'throw'`, `'warn'`, or `'off'`. See [Input validation](/basics/validation/) and [Advanced validation](/advanced/advanced-validation/). |
 | `telemetry.*` | off | OpenTelemetry tracing/metrics — `telemetry.enabled`, `telemetry.exporter`, `telemetry.sampling.*`, `telemetry.spans.*`, and more. The full table is on the [Telemetry](/architecture/telemetry/) page. |
+| `mcp.*` | off | Expose the app as a Model Context Protocol server — `mcp.enabled`, `mcp.transports`, `mcp.expose_actions`, `mcp.auth`/`mcp.auth_token`, and more (requires `quioteframework/mcp`). The full table is on [Exposing your app as an MCP server](/advanced/mcp-server/#settings-reference). |
 | `plugins` | `[]` | The registry `Config/plugins.*` and `PluginManager::add()` write to at boot. Not a supported `settings.*` key to write directly — declare plugins in `Config/plugins.php`/`.xml`/`.yaml` instead. See [Plugins and extensibility](/architecture/plugins/). |
 
 ### Telemetry
@@ -208,7 +209,7 @@ Set during bootstrap. `core.app_dir` is **required** (supplied by the front cont
 
 ## Factory parameters
 
-These are `<ae:parameter>` children on a `factories` (or `databases`) entry — not `core.*` keys. See [Configuration → factories](/architecture/configuration/#factories).
+These are `<ae:parameter>` children on a `factories` (or `databases`) entry — not `core.*` keys. See [Configuration: factories](/architecture/configuration/#factories).
 
 ### Storage (`storage` role)
 
@@ -254,7 +255,7 @@ The Doctrine (`DoctrineDatabase`, `Doctrine2*`) and `PropelDatabase` connectors 
 
 | Name | Default | Effect |
 |---|---|---|
-| `QUIOTE_ENV` | `'prod'` | Environment name → `core.environment`. Note: the scaffolded `pub/index.php` passes `'development'` explicitly, so the effective default depends on your front controller. |
+| `QUIOTE_ENV` | `'prod'` | Environment name, read into `core.environment`. Note: the scaffolded `pub/index.php` passes `'development'` explicitly, so the effective default depends on your front controller. |
 | `QUIOTE_CONTEXT` | `'web'` | Primary context to create/prime. |
 | `QUIOTE_MAX_REQUESTS` | `1000` | FrankenPHP worker requests before a deep cleanup. |
 | `QUIOTE_JSON_STRICT` | strict on | Set to `0` to tolerate malformed JSON bodies instead of returning 400. See [PayloadParsingMiddleware](/architecture/middleware-reference/#payloadparsingmiddleware). |

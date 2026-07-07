@@ -178,6 +178,17 @@ ExecutionTimeMiddleware
 
 Place your middleware relative to the earliest built-in whose work it depends on. A route-aware middleware goes `after: RoutingMiddleware`; something that must run before the session is touched goes `before: SessionMiddleware`.
 
+### ErrorHandlingMiddleware before and after are not symmetric
+
+`ErrorHandlingMiddleware` is the one anchor where `before:`/`after:` don't just mean "earlier/later" the way they do everywhere else — because it wraps the rest of the stack in a try/catch, which side you're on determines whether your middleware runs at all on an error response:
+
+- **`after: ErrorHandlingMiddleware`** places your middleware **inside** the try/catch — closer to the handler. If something downstream (the action, a renderer) throws, the exception unwinds straight past your middleware on its way to being caught. Anything your middleware does on the way *out* — setting a response header, say — never happens on an error response.
+- **`before: ErrorHandlingMiddleware`** places your middleware **outside** it, wrapping it. It still runs on the way out even when an inner layer threw and `ErrorHandlingMiddleware` converted that into an error response.
+
+:::caution["Runs early" is the wrong intuition here]
+A middleware that adds a response header to *every* response, registered with `after: ErrorHandlingMiddleware` because "runs early" sounded right, will pass every happy-path test and then silently drop the header on any route that throws. If your middleware needs to observe or modify every response including error ones, use `before: ErrorHandlingMiddleware` explicitly — don't infer it from "early vs. late." See [Testing the full pipeline](/advanced/testing/#testing-the-full-pipeline) for exercising the error path, not just the happy path, when you write its test.
+:::
+
 ## Ordering rules and caveats
 
 - **Register order matters for chains.** If middleware B is positioned `after: A` and A is itself a *registered* middleware, register A first — otherwise A is not in the stack yet when B looks for it, and B falls back to "before `SecurityMiddleware`". Use `priority` to make intent explicit rather than relying on registration order.
@@ -297,4 +308,4 @@ What you get and what you owe:
 
 If you only need to *remove* a default or two — not the whole stack — do not use this. Disable the specific middlewares via `MiddlewareCatalog::initialize([Fqcn::class => false])` (see [The middleware pipeline](/architecture/middleware-pipeline/)) and keep everything else.
 
-For copy-pasteable steps, see the [Plugins & middleware quickstart → Write your own middleware](/plugins/quickstart/#write-your-own-middleware).
+For copy-pasteable steps, see the [Plugins & middleware quickstart: Write your own middleware](/plugins/quickstart/#write-your-own-middleware).

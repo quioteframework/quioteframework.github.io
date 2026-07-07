@@ -17,7 +17,15 @@ Storage is a factory role (`storage`), so you pick the backend by pointing that 
 | `Quiote\Storage\Pdo\PdoSessionStorage` | You want sessions in a database table (shared across nodes, survives restarts). | `quioteframework/session-pdo` |
 | `Quiote\Storage\NullStorage` | You want a user object but no sessions at all (stateless APIs). | the kernel |
 
-The scaffolded app uses `NullStorage`. Switch to real sessions by changing the `storage` factory:
+The scaffolded app uses `NullStorage`.
+
+:::danger[NullStorage means no session cookie, which means no working CSRF protection]
+With `NullStorage`, no session is ever persisted and no session cookie is ever sent — for the entire app, on every request. `CsrfValidationMiddleware` treats **any** request with no session cookie as exempt from CSRF checking (no ambient credential, nothing for an attacker to ride — see [Authentication & authorization: CSRF protection](/advanced/authentication-authorization/#automatic-exemptions--and-the-nullstorage-trap)). With `NullStorage` active, that exemption fires on *every* request, so CSRF validation never actually runs, even though the `_csrf_token` hidden field is still injected into every form and looks like it's doing something.
+
+If your app has any state-changing form or endpoint a browser session could be tricked into submitting, switch to `SessionStorage` or the PDO backend below **before** relying on CSRF protection. `NullStorage` is only correct for genuinely stateless apps/APIs, where there's no ambient session cookie for CSRF to protect in the first place.
+:::
+
+Switch to real sessions by changing the `storage` factory:
 
 <Tabs syncKey="config-format">
 <TabItem label="PHP">
@@ -104,7 +112,7 @@ Optional column-name parameters (`db_id_col`, `db_data_col`, `db_time_col`, defa
 
 ### Cloud session backends
 
-`session-pdo` also provides a `Quiote\Session\Pdo\PdoSessionPersistence` built on the newer `SessionPersistenceInterface` (which `SessionManager` uses), rather than the native save-handler mechanism above. Three cloud packages implement that same interface to keep sessions in managed object storage — [`quioteframework/session-azure`](/plugins/official-packages/#quioteframeworksession-azure) (Blob or Table), [`quioteframework/session-s3`](/plugins/official-packages/#quioteframeworksession-s3) (S3 and S3-compatible stores like MinIO), and [`quioteframework/session-gcs`](/plugins/official-packages/#quioteframeworksession-gcs) (Google Cloud Storage). Each is a lightweight PSR-18 REST client with no vendor SDK dependency. See [Official packages → Session backends](/plugins/official-packages/#session-backends).
+`session-pdo` also provides a `Quiote\Session\Pdo\PdoSessionPersistence` built on the newer `SessionPersistenceInterface` (which `SessionManager` uses), rather than the native save-handler mechanism above. Three cloud packages implement that same interface to keep sessions in managed object storage — [`quioteframework/session-azure`](/plugins/official-packages/#quioteframeworksession-azure) (Blob or Table), [`quioteframework/session-s3`](/plugins/official-packages/#quioteframeworksession-s3) (S3 and S3-compatible stores like MinIO), and [`quioteframework/session-gcs`](/plugins/official-packages/#quioteframeworksession-gcs) (Google Cloud Storage). Each is a lightweight PSR-18 REST client with no vendor SDK dependency. See [Official packages: Session backends](/plugins/official-packages/#session-backends).
 
 ## Cookie flags
 
@@ -149,7 +157,7 @@ This is the same API the framework's own `User` classes use to persist authentic
 $storage->regenerate();   // new session id, keeps the data — call on login
 ```
 
-Regenerating the id on the unauthenticated → authenticated transition defeats session fixation. `SecurityUser::setAuthenticated(true)` does this for you (see the [auth page](/advanced/authentication-authorization/#securityuser)), so you usually get it for free.
+Regenerating the id on the unauthenticated-to-authenticated transition defeats session fixation. `SecurityUser::setAuthenticated(true)` does this for you (see the [auth page](/advanced/authentication-authorization/#securityuser)), so you usually get it for free.
 
 ## Worker-mode safety
 

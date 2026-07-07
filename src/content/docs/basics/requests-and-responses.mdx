@@ -5,7 +5,11 @@ description: The WebRequest and WebResponse API — parameters, cookies, headers
 
 import { Tabs, TabItem } from '@astrojs/starlight/components';
 
-Every action receives a `WebRequest` and, through the context, can shape a `WebResponse`. `WebRequest` **is** a real PSR-7 `ServerRequestInterface` (it extends Nyholm's `ServerRequest`), so anything that speaks PSR-7 works with it directly; on top of that it adds Quiote's parameter model and convenience getters. `WebResponse` is the framework's response object, which can carry and mirror a PSR-7 response.
+Every action receives a `WebRequest` and, through the context, can shape a `WebResponse`. `WebRequest` **is** a real PSR-7 `ServerRequestInterface` (it composes Nyholm's `ServerRequest`), so anything that speaks PSR-7 works with it directly; on top of that it adds Quiote's parameter model and convenience getters. `WebResponse` is the framework's response object, which can carry and mirror a PSR-7 response.
+
+:::caution[WebRequest is immutable]
+Every `WebRequest` mutator — `setParameter()`, `appendParameter()`, `removeParameter()`, `declareParameter()`/`declareParameters()`, `enforceValidatedParameters()`, `clearParameters()`, `setAttribute()`, `appendAttribute()`, and every inherited PSR-7 `with*()` method — returns a **new** instance and leaves the original untouched, the same contract as the PSR-7 request it wraps. A discarded return value is a silent no-op, not an error: `$request->setParameter('total', $total);` compiles, runs, and does nothing. See [Mutating a request](#mutating-a-request) below before you write to one.
+:::
 
 ## Reading request input
 
@@ -35,11 +39,13 @@ Related reads:
 
 | Method | Returns |
 |---|---|
-| `hasParameter($name)` | Whether the parameter is present. |
-| `getParameters($source)` | All params from a source: `parameters`, `cookies`, `files`, `headers`, `attributes`, `runtime`. |
+| `hasParameter($name)` | Whether the parameter is present *and* whitelisted — `false` for an unvalidated key, not an exception. |
+| `getParameters($source)` / `getAll($source)` | All params from a source: `parameters`, `cookies`, `files`, `headers`, `attributes`, `runtime`. |
 | `getParameter($name, $default)` | A single value, with strict-access behaviour above. |
 
-You can also set parameters at runtime (`setParameter()`), which auto-whitelists them — useful when one middleware or action prepares input for another.
+:::note[The plural form enforces the same whitelist]
+`getParameters()`/`getAll()` are not a bulk escape hatch around `getParameter()`'s strict-access check: for the `null` (default), `'parameters'`, and `'runtime'` sources, the returned array is filtered down to whitelisted keys only, the same as calling `getParameter()` on each one individually. There is no way to read unvalidated query/body/runtime input from `WebRequest` other than the framework-internal raw snapshot covered in [Input validation](/basics/validation/#sticky-forms-after-a-partial-validation-failure).
+:::
 
 ### JSON bodies
 
@@ -61,6 +67,58 @@ $rd->getUploadedFileArray('photos');    // flat list of uploaded files
 ### URL and method
 
 Beyond the PSR-7 `getMethod()` / `getUri()`, `WebRequest` offers direct getters: `getUrlScheme()`, `getUrlHost()`, `getUrlPort()`, `getUrlPath()`, `getUrlQuery()`, `getUrl()`, and `isHttps()`.
+
+## Mutating a request
+
+`WebRequest`'s write API mirrors its read API — a runtime parameter store on top of PSR-7's own `with*()` methods — but every one of these returns a **new** `WebRequest` rather than changing the object you called it on:
+
+| Method | Effect |
+|---|---|
+| `setParameter($name, $value)` | Set a runtime parameter, auto-whitelisted for strict access. |
+| `appendParameter($name, $value)` | Append a value to a list-style runtime parameter. |
+| `removeParameter($name, $source)` | Remove a parameter from the runtime store (or `parameters` for query/body). |
+| `declareParameter($name)` / `declareParameters($names)` | Whitelist parameter name(s) for strict access without setting a value. |
+| `enforceValidatedParameters($keys)` | Merge names into the strict-access whitelist. |
+| `clearParameters()` | Drop query, body, and runtime parameters. |
+| `setAttribute($name, $value)` | Set a PSR-7 request attribute. |
+| `appendAttribute($name, $value)` | Append a value to a list-style attribute. |
+
+The most common mistake — setting a runtime parameter and expecting the current `$request` variable to reflect it:
+
+```php
+// WRONG — return value discarded; $request is unchanged
+$request->setParameter('total', $total);
+```
+
+```php
+// RIGHT — capture the new instance
+$request = $request->setParameter('total', $total);
+```
+
+### Reassigning isn't always enough: sync back to Context
+
+`Context::getRequest()` is how the rest of the framework — templates, later middleware, the next pipeline stage — reaches "the current request". Reassigning your own local `$request` variable doesn't change what `Context::getRequest()` hands back to anyone else; if the new value needs to be visible beyond the current method, sync it explicitly:
+
+```php
+$request = $request->setParameter('total', $total);
+$this->getContext()->setRequest($request);
+```
+
+Whether you need that sync depends on where you're calling from:
+
+| Where | Sync needed? |
+|---|---|
+| Inside a PSR-15 middleware, immediately passing `$request` into `$handler->handle($request)` | No — you're already forwarding the new value. |
+| Inside `Action::validate()` / `validate{Method}()` | Yes — `ValidationMiddleware` re-fetches `Context::getRequest()` right after `validate()` runs. |
+| Inside `Action::execute{Method}()` | Yes — `ActionExecutor::doExecute()` re-fetches `Context::getRequest()` right after the action runs, before creating the view. |
+| Inside `Action::handle{Method}Error()` | Yes — `ValidationMiddleware` re-fetches `Context::getRequest()` right after the error handler, before creating the error view. |
+| Inside `View::execute{Method}()` | Only if something rendered afterward needs to read it back — there's no further re-fetch once a view runs, so sync immediately if at all. |
+
+When in doubt, sync anyway: an unnecessary `$this->getContext()->setRequest($request)` is a harmless no-op, while a missing one is a parameter or attribute that silently vanishes.
+
+:::note[Passing data to a view isn't this]
+`Action::setAttribute()`/`View::setAttribute()` — the mechanism for [passing data from an action to its view](/architecture/actions-and-views/#passing-data-with-attributes) — are a separate, still-mutable API backed by each action/view's own attribute holder, not `WebRequest::setAttribute()`. Don't confuse the two: setting a *request* attribute doesn't put anything in `$template`, and vice versa.
+:::
 
 ## Shaping the response
 
@@ -160,4 +218,4 @@ Leaving `core.trusted_hosts` empty (the default) applies no restriction. Set it 
 
 ## Worker-mode note
 
-Both `WebRequest` and `WebResponse` implement the framework's reset contract and are cleared between requests in [worker mode](/architecture/deployment/) — the request's runtime parameters and attributes, the response's status, headers, cookies, and redirect all reset to a clean state. The request is rebuilt from the incoming globals every request, so nothing carries over. As with sessions, the takeaway is to read and write through these objects rather than the superglobals, so the reset actually covers your state.
+Both `WebRequest` and `WebResponse` implement the framework's reset contract and are cleared between requests in [worker mode](/architecture/deployment/) — the response's status, headers, cookies, and redirect all reset to a clean state, and the incoming `WebRequest` itself is rebuilt wholesale from the new request's globals rather than reused, so no runtime parameter, attribute, or URL override from a previous request can carry over. As with sessions, the takeaway is to read and write through these objects rather than the superglobals, so the reset actually covers your state.

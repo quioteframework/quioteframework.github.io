@@ -73,11 +73,11 @@ return [
 
 `register()` runs once at boot, after your settings load and before contexts are created, and it can only *add* — your `settings.*` and container bindings always win. Two packages skip the `plugins` step: **rate limiting** is a plain library you call from your own code, and the **telemetry dashboard** contributes a standalone console command that's available as soon as the package is installed. [Official packages](/plugins/official-packages/) spells out the exact "enable" step for each one.
 
-Every official package's plugin class already carries the required `#[Quiote\Plugin\Attribute\Plugin]` attribute — see [Plugins and extensibility → Writing a plugin](/architecture/plugins/#writing-a-plugin) for why that attribute exists and what it means for your own plugins.
+Every official package's plugin class already carries the required `#[Quiote\Plugin\Attribute\Plugin]` attribute — see [Plugins and extensibility: Writing a plugin](/architecture/plugins/#writing-a-plugin) for why that attribute exists and what it means for your own plugins.
 
 ### CSRF is the deliberate exception
 
-One package is *not* opt-in: **`quioteframework/csrf`**. It's a required dependency of the kernel and registers itself automatically at boot, so every app is CSRF-protected out of the box without a `plugins` entry. It's a security default, not a packaging convenience — so you turn it *off* consciously (set `core.csrf.enabled => false`, which logs a warning), rather than turning it on. See [Official packages → csrf](/plugins/official-packages/#quioteframeworkcsrf).
+One package is *not* opt-in: **`quioteframework/csrf`**. It's a required dependency of the kernel and registers itself automatically at boot, so every app is CSRF-protected out of the box without a `plugins` entry. It's a security default, not a packaging convenience — so you turn it *off* consciously (set `core.csrf.enabled => false`, which logs a warning), rather than turning it on. See [Official packages: csrf](/plugins/official-packages/#quioteframeworkcsrf).
 
 <Aside type="caution" title="Pre-alpha: installing the packages">
 The `quioteframework/*` packages now live in their own GitHub repositories, but — like the kernel itself — they are **not published to Packagist yet** (it's early days). Until they are, add each one you use as a VCS repository in your app's `composer.json` and require the `dev-main` branch:

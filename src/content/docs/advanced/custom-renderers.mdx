@@ -75,7 +75,7 @@ Calling `parent::initialize()` (or simply not overriding it) reads the `<paramet
 
 ### Exposing `Context` getters with `assigns`
 
-An `assigns` block maps a short template variable name to a `Context` getter. `initialize()` camel-cases the config key into a getter name (`request_data` → `getRequestData`) and keeps only the ones that are real, callable `Context` getters; the rest fall through to `moreAssignNames` (renaming `$moreAssigns` keys instead). In `render()`:
+An `assigns` block maps a short template variable name to a `Context` getter. `initialize()` camel-cases the config key into a getter name (`request_data` becomes `getRequestData`) and keeps only the ones that are real, callable `Context` getters; the rest fall through to `moreAssignNames` (renaming `$moreAssigns` keys instead). In `render()`:
 
 ```php
 foreach ($this->assigns as $variable => $getter) {
@@ -236,7 +236,7 @@ Because it holds no per-render state, it's safe to mark `IReusableRenderer`. Not
 
 The official renderers — [`quioteframework/phptal`](/plugins/official-packages/#quioteframeworkphptal), [`quioteframework/xslt`](/plugins/official-packages/#quioteframeworkxslt), and [`quioteframework/twig`](/plugins/official-packages/#quioteframeworktwig) — are just renderer classes packaged for Composer, and yours can follow the same shape:
 
-- **`composer.json`** — `type: library`, and `require` the kernel (`quioteframework/quiote`) plus your engine library. PSR-4 autoload a namespace like `Vendor\Renderer\Engine\` → `src/`.
+- **`composer.json`** — `type: library`, and `require` the kernel (`quioteframework/quiote`) plus your engine library. PSR-4 autoload a namespace like `Vendor\Renderer\Engine\`, mapped to `src/`.
 - **`src/EngineRenderer.php`** — the renderer class (nothing more is required; there's no plugin to register).
 - **`README.md`** — the `output_types.xml` snippet to enable it, and any renderer-specific parameters (`encoding`, an `envelope` toggle, …).
 - **`tests/`** — extend `Quiote\Testing\UnitTestCase`, build a real `Quiote\View\FileTemplateLayer` pointed at a temp template, `$layer->setRenderer($renderer)`, then call `$renderer->render(...)` (or `$layer->execute(...)`) and assert on the output.

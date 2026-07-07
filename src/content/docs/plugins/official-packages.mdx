@@ -13,6 +13,8 @@ All of these packages are **MIT-licensed** (the kernel itself is LGPL-2.1+); an 
 Each package lives in its own `github.com/quioteframework/*` repository, but none is **published to Packagist** yet. Until then, install them by adding a VCS repository and requiring `dev-main` — see the [pre-alpha note in the overview](/plugins/overview/#enabling-a-package). The plain `composer require` lines below describe the eventual Packagist experience.
 </Aside>
 
+Every `Plugin::class` below is only *activated* by listing it in `plugins.*` because its class already carries the mandatory `#[Quiote\Plugin\Attribute\Plugin]` attribute — a class-string named in config without that attribute is silently refused. All official packages carry it already; you only need to add it yourself when [writing your own plugin](/architecture/plugins/#writing-a-plugin).
+
 ## At a glance
 
 | Package | Provides | Carries |
@@ -48,7 +50,7 @@ Unlike every other package here, **this one is not opt-in.** `quioteframework/cs
 'core.csrf.enabled' => false,
 ```
 
-Configure it with the `core.csrf.*` settings and opt individual routes out with an `_csrf => false` route default rather than disabling protection wholesale. See [Authentication & authorization → CSRF](/advanced/authentication-authorization/#csrf-protection) and the [Middleware reference](/architecture/middleware-reference/#csrfvalidationmiddleware).
+Configure it with the `core.csrf.*` settings and opt individual routes out with an `_csrf => false` route default rather than disabling protection wholesale. See [Authentication & authorization: CSRF](/advanced/authentication-authorization/#csrf-protection) and the [Middleware reference](/architecture/middleware-reference/#csrfvalidationmiddleware).
 
 ### `quioteframework/ratelimit`
 
@@ -58,7 +60,7 @@ Rate-limiting building blocks — `Quiote\Security\RateLimit\LoginThrottle` for 
 composer require quioteframework/ratelimit
 ```
 
-See [Authentication & authorization → Login rate limiting](/advanced/authentication-authorization/#login-rate-limiting).
+See [Authentication & authorization: Login rate limiting](/advanced/authentication-authorization/#login-rate-limiting).
 
 ## Developer experience
 
@@ -105,11 +107,11 @@ return [
 </TabItem>
 </Tabs>
 
-Keep `core.developer_exceptions` **off** in production regardless — the page exposes source and environment. See [Error handling → Developer vs safe rendering](/architecture/error-handling/#developer-vs-safe-rendering).
+Keep `core.developer_exceptions` **off** in production regardless — the page exposes source and environment. See [Error handling: Developer vs safe rendering](/architecture/error-handling/#developer-vs-safe-rendering).
 
 ### `quioteframework/mcp`
 
-Turns a Quiote app into a [Model Context Protocol](https://modelcontextprotocol.io) server — expose tools, resources, and prompts (or existing `#[Route]` actions) to AI agents over stdio or streamable HTTP.
+Turns a Quiote app into a [Model Context Protocol](https://modelcontextprotocol.io) server — expose tools, resources, and prompts, or turn an existing `#[Route]` action into a tool with one attribute (its validators become the tool's input schema), over stdio or streamable HTTP. Full coverage, including auth and what's not built yet: [Exposing your app as an MCP server](/advanced/mcp-server/).
 
 ```bash
 composer require quioteframework/mcp
@@ -267,7 +269,7 @@ return [
 </TabItem>
 </Tabs>
 
-Registers the `eloquent` alias → `EloquentDatabase`. See [Databases → Eloquent](/basics/databases/#eloquent).
+Registers the `eloquent` alias for `EloquentDatabase`. See [Databases: Eloquent](/basics/databases/#eloquent).
 
 ### `quioteframework/db-doctrine`
 
@@ -310,7 +312,7 @@ return [
 </TabItem>
 </Tabs>
 
-Registers both the `doctrine` (ORM) and `doctrine_dbal` (query builder only) aliases. See [Databases → Doctrine ORM](/basics/databases/#doctrine-orm).
+Registers both the `doctrine` (ORM) and `doctrine_dbal` (query builder only) aliases. See [Databases: Doctrine ORM](/basics/databases/#doctrine-orm).
 
 ### `quioteframework/db-cycle`
 
@@ -353,7 +355,7 @@ return [
 </TabItem>
 </Tabs>
 
-Registers the `cycle` alias → `CycleDatabase` (configured in `databases.php` only — see [Databases → Cycle ORM](/basics/databases/#cycle-orm)).
+Registers the `cycle` alias for `CycleDatabase` (configured in `databases.php` only — see [Databases: Cycle ORM](/basics/databases/#cycle-orm)).
 
 ### `quioteframework/db-propulsion`
 
@@ -396,7 +398,7 @@ return [
 </TabItem>
 </Tabs>
 
-Registers the `propulsion` alias → `PropulsionDatabase`. Carries the [`quioteframework/propulsion`](https://github.com/quioteframework/propulsion) runtime — a PHP 8.5, Propel-style ORM with its own code generator (`bin/propulsion model:build`). Unlike the other adapters it owns its own connection factory (a runtime `config` file, no inline DSN or layer mode). See [Databases → Propulsion](/basics/databases/#propulsion).
+Registers the `propulsion` alias for `PropulsionDatabase`. Carries the [`quioteframework/propulsion`](https://github.com/quioteframework/propulsion) runtime — a PHP 8.5, Propel-style ORM with its own code generator (`bin/propulsion model:build`). Unlike the other adapters it owns its own connection factory (a runtime `config` file, no inline DSN or layer mode). See [Databases: Propulsion](/basics/databases/#propulsion).
 
 <Aside type="note" title="PDO stays in the core">
 The raw **PDO** driver (`class="pdo"`) is built into the kernel and always available — no package needed. Only the ORM adapters are extracted.
@@ -413,6 +415,10 @@ The [PHPTAL](https://phptal.org/) renderer, `Quiote\Renderer\Phptal\PhptalRender
 ```bash
 composer require quioteframework/phptal
 ```
+
+:::caution[PHPTAL throws on a genuinely undefined array key]
+A template that reads `${foo/bar}` (or `tal:content="foo/bar"`) **throws** if `bar` was never set on the `foo` array — unlike plain PHP array access with `??`/`isset()`, PHPTAL does not treat a missing key as `null`. This is upstream PHPTAL behavior, not something Quiote's renderer wrapper changes: a defensible, arguably safer default (a forgotten attribute surfaces at render time instead of silently printing nothing), but it means every attribute a PHPTAL template reads must be `setAttribute()`-ed — or explicitly given a default — on **every** code path through the view, including early-return and error branches, not just the happy path you tested first.
+:::
 
 ### `quioteframework/xslt`
 

@@ -132,7 +132,7 @@ public function executeHtml(WebRequest $rd)
 {
     $this->loadLayout();          // prepare the "content" layer
     $this->setAttribute('title', 'Home');
-    // returning null → the prepared layers render
+    // returning null renders the prepared layers
 }
 ```
 
@@ -156,17 +156,116 @@ Templates live in the module's `Templates/` directory, named after the action an
 
 ## Slots: embedding one action in another
 
-A view can render the output of *another* action inline — a "slot". Use it for shared fragments like a navigation bar or a sidebar widget that has its own action and view:
+A view can render the output of *another* action inline — a "slot". Use it for shared fragments like a navigation bar or a sidebar widget that has its own action and view. Two entry points on `View`, both canonical — one just wraps the other:
 
 ```php
-public function executeHtml(WebRequest $rd)
+public function renderSlot(string $moduleName, string $actionName, ?array $arguments = null, ?string $outputType = null): string
 {
-    $this->loadLayout();
-    $this->setAttribute('nav', $this->renderSlot('Default', 'Navigation'));
+    $slotContent = $this->createSlotContent($moduleName, $actionName, $arguments, $outputType);
+    return $slotContent->getContent();
 }
 ```
 
-`renderSlot($module, $action, $arguments = null, $outputType = null)` runs the named action through the framework (its own validation, view, and template) and returns the rendered string, which you can then place in the parent template. Slots are prepared by `SlotMiddleware` in the pipeline, so they participate in the normal execution model rather than being a side channel.
+Pick based on what you need next:
+
+- **`renderSlot($module, $action, $arguments, $outputType)`** returns the rendered string immediately. Use this when you just want the HTML now, e.g. to store as a regular view attribute:
+
+  ```php
+  public function executeHtml(WebRequest $rd)
+  {
+      $this->loadLayout();
+      $this->setAttribute('nav', $this->renderSlot('Default', 'Navigation'));
+  }
+  ```
+
+- **`createSlotContent($module, $action, $arguments, $outputType)`** returns a `SlotRenderable` value object without rendering it immediately. Use this to attach the slot to a **named layer slot**, letting the renderer decide when/how to insert it into the template:
+
+  ```php
+  $this->getLayer('content')->setSlot(
+      'Attachments',
+      $this->createSlotContent('Item', 'Attachment', ['item_id' => $item->getId()])
+  );
+  ```
+
+Both are prepared by `SlotMiddleware` in the pipeline, so slots participate in the normal execution model rather than being a side channel.
+
+### Arguments and who can read them
+
+`$arguments` is applied via `setParameter()` onto the shared request before the slot's action/view runs, then restored afterward — explicit, developer-supplied values, not raw HTTP input, and (like any `setParameter()` call) auto-whitelisted for strict-access reads. What actually runs to read them depends on whether the slot action is [`isSimple()`](/architecture/actions-and-views/#issimple-means-no-action-code-runs-at-all):
+
+- **The slot action is `isSimple()`** — the common case; most slots are static or purely presentational. `execute*()` never runs at all, so only the **view** can read the passed arguments, via `$rd->getParameter('currentPage')` in `execute()`/`executeHtml()`/etc.
+- **The slot action needs real business logic against those arguments** — it must **not** be `isSimple()`. Give it real `register{Method}Validators()` for the parameter names it needs, the same as any other action; `setParameter()`'s auto-whitelisting already makes the arguments technically readable, but an `isSimple()` action has no code path left to read them from at all, and skipping real validators on a non-simple action forfeits the type/shape checking a validator would otherwise give you.
+
+In short: `renderSlot()`/`createSlotContent()` for passing values in, `isSimple()` for whether any action code ever gets to see them once they're there. A slot's action/view runs as its own separate Action/View instance with its own private attributes, though — a slot can't set an attribute that the top-level view or layout template will see. That isolation is exactly right for the slot's own output, but wrong for one specific thing a slot-nested view often needs to do: register page-level CSS/JS. That's what `AssetRegistry` is for.
+
+## Page assets: CSS and JavaScript
+
+A view — top-level or nested inside a slot — registers assets for the page's `<head>` through two methods on `View`:
+
+```php
+class ChartSuccessView extends View
+{
+    public function executeHtml(WebRequest $rd)
+    {
+        $this->addCss('css/chart.css');
+        $this->addJavascript('js/d3.min.js');
+        $this->addJavascript('js/my-chart.js');
+    }
+}
+```
+
+Unlike `setAttribute()`, there's no immutability or isolation footgun here — call it and move on, no reassignment needed. `addCss()`/`addJavascript()` reach `Context::getAssetRegistry()` directly rather than going through the view's own attribute holder, so they work identically whether the view is the page's top-level view or something rendered inside a slot: `Context` is the one object every node in the render tree reaches identically. The registry deduplicates at insertion time and preserves first-seen order — two different slots both needing `d3.min.js` render it once, at the position it was first needed.
+
+Wire the registry into a renderer's `assigns` to read it from a template, the same way the request is exposed as `$rq`:
+
+<Tabs syncKey="config-format">
+<TabItem label="PHP">
+
+```php
+// Config/output_types.php — inside the renderer's config
+'assigns' => [
+    'request'        => 'rq',
+    'asset_registry' => 'assets',
+],
+```
+
+</TabItem>
+<TabItem label="YAML">
+
+```yaml
+# Config/output_types.yaml — inside the renderer's config
+assigns:
+  request: rq
+  asset_registry: assets
+```
+
+</TabItem>
+<TabItem label="XML">
+
+```xml
+<!-- Config/output_types.xml — inside the <renderer> -->
+<ae:parameter name="assigns">
+    <ae:parameter name="request">rq</ae:parameter>
+    <ae:parameter name="asset_registry">assets</ae:parameter>
+</ae:parameter>
+```
+
+</TabItem>
+</Tabs>
+
+Then, typically in the layout's shell template:
+
+```php
+<?php foreach ($assets->css() as $href): ?>
+    <link rel="stylesheet" type="text/css" href="<?= $href ?>">
+<?php endforeach; ?>
+
+<?php foreach ($assets->javascript() as $src): ?>
+    <script type="text/javascript" src="<?= $src ?>"></script>
+<?php endforeach; ?>
+```
+
+`AssetRegistry` has no priority/ordering beyond insertion order and no per-asset metadata (media queries, `defer`/`async`, integrity hashes) — reach for a small value object in place of the plain `string` href/src if you need those; there's no built-in support for inline `<script>` blocks either. It's request-scoped and cleared between requests in worker mode, the same as everything else covered in the [worker-mode note](/basics/requests-and-responses/#worker-mode-note).
 
 ## Choosing a different renderer
 

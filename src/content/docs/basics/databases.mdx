@@ -113,7 +113,7 @@ databases:
 
 - Multiple `<database>` children (or array entries) define multiple named connections.
 - Per-environment overrides use `<ae:configuration environment="…">` blocks (see [Configuration](/architecture/configuration/)).
-- In XML, array parameters nest `<ae:parameter>` (named → assoc, unnamed → list).
+- In XML, array parameters nest `<ae:parameter>` (named ones become assoc entries, unnamed ones become list entries).
 
 :::note[Cycle needs PHP config]
 Cycle's parameters include PHP *config objects*, which XML and YAML can't express — configure Cycle in a `databases.php` (see [Cycle ORM](#cycle-orm)). The other adapters work in all three formats.
@@ -189,7 +189,7 @@ See [Plugins and extensibility](/architecture/plugins/) for how plugins work.
 
 ## PDO
 
-`class="pdo"` → `Quiote\Database\PdoDatabase`. This is the lowest-level adapter: PHP's built-in `ext-pdo` extension, with no query builder or ORM layered on top, over whichever driver extension you have compiled in (`pdo_pgsql`, `pdo_mysql`, `pdo_sqlite`, `pdo_sqlsrv`, `pdo_oci`). It's the floor every other adapter on this page sits on — Eloquent, Doctrine DBAL, and Cycle all default to building their own PDO connection from the same kind of parameters, and Quiote's core deliberately ships no native mysqli/pgsql/oci8 driver of its own; anything more specialized than PDO is reached *through* an ORM that supports it (e.g. Doctrine DBAL's own driver choices), not as a separate Quiote adapter. Reach for it directly when you don't want an ORM at all — raw SQL, a hand-rolled data-access layer, or a service that only needs `prepare()`/`execute()`. Always available; no package to install (requires `ext-pdo`).
+PHP's built-in `ext-pdo` extension is the lowest-level adapter here: no query builder or ORM layered on top, just a uniform prepared-statement API over whichever driver extension you have compiled in (`pdo_pgsql`, `pdo_mysql`, `pdo_sqlite`, `pdo_sqlsrv`, `pdo_oci`). It's the floor every other adapter on this page sits on — Eloquent, Doctrine DBAL, and Cycle all default to building their own PDO connection from the same kind of parameters, and Quiote's core deliberately ships no native mysqli/pgsql/oci8 driver of its own; anything more specialized than PDO is reached *through* an ORM that supports it (e.g. Doctrine DBAL's own driver choices), not as a separate Quiote adapter. Reach for it directly when you don't want an ORM at all — raw SQL, a hand-rolled data-access layer, or a service that only needs `prepare()`/`execute()`. Select it with `class="pdo"`; always available, no package to install (requires `ext-pdo`).
 
 | Parameter | Default | Description |
 |---|---|---|
@@ -204,7 +204,7 @@ See [Plugins and extensibility](/architecture/plugins/) for how plugins work.
 
 ## Eloquent
 
-`class="eloquent"` → `EloquentDatabase`. [Eloquent](https://laravel.com/docs/eloquent) is Laravel's active-record ORM and fluent query builder (`illuminate/database`), usable standalone outside a full Laravel application via its **Capsule Manager**. It has by far the largest install base and community of any PHP ORM, so it's the natural pick if your team already thinks in Laravel/Eloquent conventions, or you're porting existing Eloquent models into a Quiote app — the models themselves don't need to change. Requires `illuminate/database` + `EloquentPlugin`. `getConnection()` returns the Capsule Manager itself, not the underlying connection — a separate typed accessor, `getEloquentConnection()`, reaches that (see below) — so the framework's worker-mode `ping()`/`reset()`/`shutdown()` machinery can manage the Capsule uniformly.
+[Eloquent](https://laravel.com/docs/eloquent) is Laravel's active-record ORM and fluent query builder (`illuminate/database`), usable standalone outside a full Laravel application via its **Capsule Manager**. It has by far the largest install base and community of any PHP ORM, so it's the natural pick if your team already thinks in Laravel/Eloquent conventions, or you're porting existing Eloquent models into a Quiote app — the models themselves don't need to change. Select it with `class="eloquent"`; requires `illuminate/database` + `EloquentPlugin`. `getConnection()` returns the Capsule Manager itself, not the underlying connection — a separate typed accessor, `getEloquentConnection()`, reaches that (see below) — so the framework's worker-mode `ping()`/`reset()`/`shutdown()` machinery can manage the Capsule uniformly.
 
 One caveat worth knowing up front: Eloquent's `Model` classes (as opposed to the plain query builder) resolve their connection through Capsule's static connection resolver, so using them requires the `global`/`boot_eloquent` options below — process-global static state set up once at worker boot, not something to redo per request.
 
@@ -278,7 +278,7 @@ $conn->table('users')->where('active', true)->get();
 
 ## Doctrine ORM
 
-`class="doctrine"` → `DoctrineDatabase` (Doctrine ORM 3 / DBAL 4). [Doctrine](https://www.doctrine-project.org/projects/orm.html) is the classic PHP **data-mapper** ORM — the opposite design from Eloquent's active record: entities are plain PHP objects with no knowledge of persistence, mapped to the schema via attributes or XML, and a `UnitOfWork`/`EntityManager` tracks changes and flushes them together. It's the de-facto "serious" choice for enterprise and DDD-influenced codebases (it's Symfony's own default ORM), trading some of Eloquent's convenience for persistence-ignorant domain objects and explicit change tracking. This adapter targets modern Doctrine ORM 3 on DBAL 4. Requires `doctrine/orm` + `DoctrinePlugin`. `getConnection()` returns the `EntityManagerInterface`.
+[Doctrine](https://www.doctrine-project.org/projects/orm.html) is the classic PHP **data-mapper** ORM — the opposite design from Eloquent's active record: entities are plain PHP objects with no knowledge of persistence, mapped to the schema via attributes or XML, and a `UnitOfWork`/`EntityManager` tracks changes and flushes them together. It's the de-facto "serious" choice for enterprise and DDD-influenced codebases (it's Symfony's own default ORM), trading some of Eloquent's convenience for persistence-ignorant domain objects and explicit change tracking. This adapter targets modern Doctrine ORM 3 on DBAL 4. Select it with `class="doctrine"`; requires `doctrine/orm` + `DoctrinePlugin`. `getConnection()` returns the `EntityManagerInterface`.
 
 | Parameter | Default | Description |
 |---|---|---|
@@ -355,7 +355,7 @@ $repo = $db->getRepository(User::class);   // Doctrine\ORM\EntityRepository
 
 ## Doctrine DBAL
 
-`class="doctrine_dbal"` → `DoctrineDbalDatabase`. [DBAL](https://www.doctrine-project.org/projects/dbal.html) is Doctrine's connection abstraction and SQL query builder **without** the entity/unit-of-work layer above it — useful when you want vendor-portable SQL and a fluent query builder but don't want to commit to entity mapping: reporting queries, admin tooling, or a gradual migration path onto (or off of) the full ORM. The same `DoctrinePlugin` registers both the `doctrine` and `doctrine_dbal` aliases, since they share one underlying package (`doctrine/dbal` is itself a dependency of `doctrine/orm`) — install `db-doctrine` once and use either or both. Requires `doctrine/dbal` + `DoctrinePlugin`. `getConnection()` returns the DBAL `Connection`. Parameters are the connection subset of Doctrine ORM (`driver`, `host`, `port`, `dbname`, `user`/`username`, `password`, `path`, `memory`, `charset`, or `url`).
+[DBAL](https://www.doctrine-project.org/projects/dbal.html) is Doctrine's connection abstraction and SQL query builder **without** the entity/unit-of-work layer above it — useful when you want vendor-portable SQL and a fluent query builder but don't want to commit to entity mapping: reporting queries, admin tooling, or a gradual migration path onto (or off of) the full ORM. The same `DoctrinePlugin` registers both the `doctrine` and `doctrine_dbal` aliases, since they share one underlying package (`doctrine/dbal` is itself a dependency of `doctrine/orm`) — install `db-doctrine` once and use either or both. Select it with `class="doctrine_dbal"`; requires `doctrine/dbal` + `DoctrinePlugin`. `getConnection()` returns the DBAL `Connection`. Parameters are the connection subset of Doctrine ORM (`driver`, `host`, `port`, `dbname`, `user`/`username`, `password`, `path`, `memory`, `charset`, or `url`).
 
 <Tabs syncKey="config-format">
 <TabItem label="PHP">
@@ -408,7 +408,7 @@ $qb   = $db->getQueryBuilder();            // Doctrine\DBAL\Query\QueryBuilder
 
 ## Cycle ORM
 
-`class="cycle"` → `CycleDatabase` (Cycle ORM v2). [Cycle](https://cycle-orm.dev/) comes out of the Spiral/RoadRunner ecosystem — a data-mapper ORM like Doctrine, but purpose-built to be stateless and schema-first so it behaves correctly across thousands of requests in one long-lived process, rather than assuming PHP's traditional request-per-process model. Schema compilation from annotated entities is a separate, cacheable build step done ahead of time — an app/console-time concern, not the adapter's job — so the adapter consumes an already-compiled schema, not annotations, at request time. That design makes Cycle a natural fit for Quiote's own worker-mode-first architecture: reach for it when you want a data-mapper ORM and are running under FrankenPHP or another persistent worker. Requires `cycle/orm` + `cycle/database` + `CyclePlugin`. `getConnection()` returns the `ORMInterface`.
+[Cycle](https://cycle-orm.dev/) (v2) comes out of the Spiral/RoadRunner ecosystem — a data-mapper ORM like Doctrine, but purpose-built to be stateless and schema-first so it behaves correctly across thousands of requests in one long-lived process, rather than assuming PHP's traditional request-per-process model. Schema compilation from annotated entities is a separate, cacheable build step done ahead of time — an app/console-time concern, not the adapter's job — so the adapter consumes an already-compiled schema, not annotations, at request time. That design makes Cycle a natural fit for Quiote's own worker-mode-first architecture: reach for it when you want a data-mapper ORM and are running under FrankenPHP or another persistent worker. Select it with `class="cycle"`; requires `cycle/orm` + `cycle/database` + `CyclePlugin`. `getConnection()` returns the `ORMInterface`.
 
 Cycle owns its driver configuration via **PHP config objects**, so it's configured in a `databases.php` only — not XML/YAML.
 
@@ -459,9 +459,9 @@ $repo = $db->getRepository('user');         // Cycle\ORM\RepositoryInterface
 
 ## Propulsion
 
-`class="propulsion"` → `Quiote\Database\Adapter\Propulsion\PropulsionDatabase`. [Propulsion](https://github.com/quioteframework/propulsion) is the framework team's own PHP 8.5-targeted fork of **Propel 1** (namespaced `Propel\`) — not a third-party dependency merely wrapped here, but an ORM the Quiote maintainers own and maintain themselves, because upstream Propel is effectively abandoned and this is the ORM their own production app (Jakamo) already runs on. It's included as a first-class, actively-maintained option rather than a legacy leftover.
+[Propulsion](https://github.com/quioteframework/propulsion) is the framework team's own PHP 8.5-targeted fork of **Propel 1** (namespaced `Propel\`) — not a third-party dependency merely wrapped here, but an ORM the Quiote maintainers own and maintain themselves, because upstream Propel is effectively abandoned and this is the ORM their own production app (Jakamo) already runs on. It's included as a first-class, actively-maintained option rather than a legacy leftover.
 
-Like Propel, Propulsion is **code-generation-first**, in the classic Hibernate/Propel-tools style — closer in spirit to Cycle's compiled-schema approach than to Eloquent or Doctrine's runtime mapping, but pushed further: you author a schema, run `bin/propulsion model:build` to generate Object Model and Query classes ahead of time, autoload them via Composer, and your application code calls those generated classes directly. That's a heavier build-time footprint than the other adapters, but no runtime reflection or annotation parsing at request time. The adapter wires the runtime connection those generated classes use. Requires the [`quioteframework/propulsion`](https://github.com/quioteframework/propulsion) runtime + `quioteframework/db-propulsion`'s `PropulsionPlugin`. `getConnection()` returns a `Propulsion\Connection\PropulsionPDO`.
+Like Propel, Propulsion is **code-generation-first**, in the classic Hibernate/Propel-tools style — closer in spirit to Cycle's compiled-schema approach than to Eloquent or Doctrine's runtime mapping, but pushed further: you author a schema, run `bin/propulsion model:build` to generate Object Model and Query classes ahead of time, autoload them via Composer, and your application code calls those generated classes directly. That's a heavier build-time footprint than the other adapters, but no runtime reflection or annotation parsing at request time. The adapter wires the runtime connection those generated classes use. Select it with `class="propulsion"`; requires the [`quioteframework/propulsion`](https://github.com/quioteframework/propulsion) runtime + `quioteframework/db-propulsion`'s `PropulsionPlugin`. `getConnection()` returns a `Propulsion\Connection\PropulsionPDO`.
 
 Unlike the other adapters, Propulsion owns its **own connection factory** — there's no inline DSN/credentials and no layer mode. You point it at a Propulsion runtime config file instead:
 
@@ -702,11 +702,11 @@ Ship it as a [plugin](/architecture/plugins/) to get a short alias:
 
 ```php
 use Quiote\Plugin\{PluginInterface, PluginRegistrar};
+use Quiote\Plugin\Attribute\Plugin;
 
+#[Plugin(name: 'vendor/my-orm')]
 final class MyOrmPlugin implements PluginInterface
 {
-    public function name(): string { return 'vendor/my-orm'; }
-
     public function register(PluginRegistrar $registrar): void
     {
         $registrar->databaseDriver('myorm', MyOrmDatabase::class);

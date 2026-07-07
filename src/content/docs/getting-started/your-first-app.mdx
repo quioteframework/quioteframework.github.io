@@ -7,7 +7,7 @@ import { Tabs, TabItem } from '@astrojs/starlight/components';
 
 This guide walks through a complete Quiote application: a front controller that boots the framework, one route, one action, one view, and one template. It mirrors the app the CLI scaffolds with `quiote new`, so you can generate it and follow along.
 
-By the end you will understand the path a request takes: **URL → route → action → view → template → response.**
+By the end you will understand the path a request takes, in order: **URL, route, action, view, template, response.**
 
 ## The shape of an application
 
@@ -120,7 +120,7 @@ class IndexAction extends Action
 
 Two things to understand:
 
-- **`executeRead` runs for GET requests.** Quiote maps the HTTP verb to a method: `GET` → `executeRead`, `POST` → `executeWrite`, `PUT`/`PATCH` → `executeUpdate`, `DELETE` → `executeRemove`. (You can also name a method after the exact verb — `executeGet`, `executePost` — when you need to.) This is how one action class handles several verbs. See [Actions and views](/architecture/actions-and-views/) for the full mapping.
+- **`executeRead` runs for GET requests.** Quiote maps the HTTP verb to a method: `GET` to `executeRead`, `POST` to `executeWrite`, `PUT`/`PATCH` to `executeUpdate`, `DELETE` to `executeRemove`. (You can also name a method after the exact verb — `executeGet`, `executePost` — when you need to.) This is how one action class handles several verbs. See [Actions and views](/architecture/actions-and-views/) for the full mapping.
 - **The return value is a view name, not content.** Returning `'Success'` tells the framework to render the `Success` view for this action. The action never touches the response body.
 
 To pass data to the view, call `setAttribute()`:
@@ -320,6 +320,8 @@ validation_manager:
 </Tabs>
 
 `output_types` declares the `html` output type, its PHP renderer, and its layout. `Config/databases.xml` declares a database connection (unused here because `core.use_database` is `false`). Both are shown in [Output types](/basics/output-types-and-content-negotiation/) and [Databases](/basics/databases/).
+
+Notice `storage` above is `Quiote\Storage\NullStorage` — fine for this tutorial, but **it also means no session cookie is ever sent, which silently disables CSRF protection for the whole app** even though every form still gets a `_csrf_token` field. Before building anything with real forms or logins, read [Sessions and storage](/basics/sessions/#storage-backends) and switch to `SessionStorage`.
 
 ## 7. Run it
 

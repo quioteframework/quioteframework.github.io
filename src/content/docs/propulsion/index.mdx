@@ -1,0 +1,83 @@
+---
+title: Propulsion
+description: A PHP 8.5+ code-generating ORM, forked from Propel 1.
+template: splash
+hero:
+  tagline: A code-generation-first ORM for PHP 8.5+, forked from Propel 1 and built for PostgreSQL-first, long-lived applications.
+  actions:
+    - text: Get Started
+      link: /propulsion/getting-started/installation/
+      icon: right-arrow
+    - text: View on GitHub
+      link: https://github.com/quioteframework/propulsion
+      icon: external
+      variant: minimal
+---
+
+import { CardGrid, Card, LinkCard, Aside } from '@astrojs/starlight/components';
+
+<Aside type="danger" title="Pre-alpha — here be dragons">
+**Propulsion is in a pre-alpha stage, and this documentation is incomplete and in flux.** APIs, conventions, and config surfaces described here can change without notice, some pages are still stubs or missing or carried over from Propel and not yet fully rewritten, and features may be documented ahead of — or behind — the code. Don't build anything you can't afford to rewrite. You've been warned.
+</Aside>
+
+## What is Propulsion?
+
+Propulsion is an object-relational mapper (ORM) for PHP: you describe your database as an XML schema, generate a full set of typed Object Model and Query classes from it, and your application code talks to those generated classes instead of hand-written SQL. It's a hard fork of **Propel 1**, renamed and modernized to target current PHP — Phing's build tooling replaced by a plain Symfony Console application, PostgreSQL promoted to the default and best-supported database, and `useQuery()`/`endUse()` given a closure-scoped `withQuery()` replacement that plays nicely with static analysis and IDE autocompletion. See [Migrating from Propel 1](/propulsion/getting-started/migrating-from-propel/) if you already know Propel.
+
+<CardGrid stagger>
+  <Card title="Code-generated, not reflective" icon="seti:db">
+    A schema compiles to real, typed PHP classes ahead of time — no runtime annotation parsing or reflection-driven mapping.
+  </Card>
+  <Card title="PostgreSQL-first" icon="seti:db">
+    PostgreSQL 15+ is the default and most feature-complete target; MySQL, SQLite, Oracle, and MSSQL are also supported.
+  </Card>
+  <Card title="Modern PHP 8.5+" icon="seti:php">
+    Typed properties, enums, and current PHP syntax throughout — no PHP 5-era conventions left standing.
+  </Card>
+  <Card title="No Phing required" icon="seti:shell">
+    Phing has been ripped out entirely. Code generation and schema tooling run through a Symfony Console application, `bin/propulsion`.
+  </Card>
+</CardGrid>
+
+## Get started
+
+Propulsion isn't on Packagist yet — install it straight from GitHub:
+
+```bash
+composer require quioteframework/propulsion:dev-main
+```
+
+Write a schema, generate your models, and start querying:
+
+```bash
+bin/propulsion model:build schema.xml --output-dir=src/Model --database=pgsql
+```
+
+```php
+$books = BookQuery::create()
+    ->withAuthorQuery(fn ($author) => $author->filterByFirstName('Jane'))
+    ->find();
+```
+
+See [Installation](/propulsion/getting-started/installation/) for requirements, and [Building your schema](/propulsion/getting-started/schema-and-build-time/) to go from an XML schema to generated classes.
+
+## Explore
+
+<CardGrid>
+  <LinkCard title="Basic CRUD" href="/propulsion/getting-started/basic-crud/" description="Create, read, update, and delete rows through generated Object Model classes." />
+  <LinkCard title="Relationships" href="/propulsion/basics/relationships/" description="Foreign keys, joins, and the withQuery()/with<Relation>Query() family." />
+  <LinkCard title="Migrating from Propel 1" href="/propulsion/getting-started/migrating-from-propel/" description="What changed, what's still compatible, and the automated Rector rule for useQuery()/endUse()." />
+  <LinkCard title="Behaviors" href="/propulsion/behaviors/" description="Reusable schema-level features: timestampable, sortable, i18n, soft delete, and more." />
+</CardGrid>
+
+## Using Propulsion from Quiote
+
+Propulsion also ships as one of [Quiote's](/) first-class database adapters — see [Databases: Propulsion](/basics/databases/#propulsion) for how the two fit together, though Propulsion itself is a standalone ORM with no dependency on the Quiote framework.
+
+## Credit where it's due
+
+Propulsion exists only because of the work of the Propel community over more than a decade. It is a hard fork of [**Propel 1**](https://github.com/propelorm/Propel1), originally created by **Hans Lellelid** (based on the Apache Torque project) and later maintained by the wider Propel community — notably **David Zuelke**, **François Zaninotto**, and **William Durand** — along with everyone who filed issues, wrote behaviors, and contributed patches over Propel 1's lifetime. Propel 1's own documentation, most of which this section is adapted from, lives at [propelorm.github.com](https://propelorm.github.io/), and its `CHANGELOG`/`WHATS_NEW` history up to the 1.6.1 release this fork branched from is preserved in this project's `archaeology/` folder.
+
+Propel 1 development had wound down and the project was effectively unmaintained by the time this fork began; Propulsion renamed the project (`Propel*` → `Propulsion*`), replaced Phing with a plain console application, and continues it with modern PHP and ongoing bug fixes. It's distributed under the same MIT license as Propel 1 — see the [`LICENSE`](https://github.com/quioteframework/propulsion/blob/main/LICENSE) file, which carries both the original Propel copyright holders and the Propulsion contributors, and [`NOTICE.md`](https://github.com/quioteframework/propulsion/blob/main/NOTICE.md) for the full attribution.
+
+Note that **Propel 2** is a separate, incompatible codebase (a later, Doctrine-inspired rewrite) — Propulsion forks Propel **1**, the Active Record-style ORM configured via XML schema files, not Propel 2.

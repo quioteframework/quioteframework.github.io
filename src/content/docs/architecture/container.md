@@ -37,7 +37,7 @@ $c->setFactory(Mailer::class, fn() => new Mailer(getenv('SMTP_DSN')));
 // An existing instance:
 $c->set('clock', new SystemClock());
 
-// An alias (interface → implementation):
+// An alias (interface to implementation):
 $c->alias(ClockInterface::class, 'clock');
 ```
 
@@ -68,9 +68,9 @@ When the container builds a class, it resolves each constructor parameter in str
 
 1. A parameter value bound at registration time, by name.
 2. A parameter value bound by type.
-3. An `#[Inject('id')]` attribute → resolved via `get('id')`.
-4. An `#[Autowire(value)]` attribute → a literal value.
-5. A type-hinted class → autowired via `get()`, if it can be autowired.
+3. An `#[Inject('id')]` attribute, resolved via `get('id')`.
+4. An `#[Autowire(value)]` attribute, supplying a literal value.
+5. A type-hinted class, autowired via `get()`, if it can be autowired.
 6. The parameter's default value.
 7. Otherwise, a loud `ContainerException`.
 

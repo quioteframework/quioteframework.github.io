@@ -37,13 +37,13 @@ import { CardGrid, Card, LinkCard, Aside } from '@astrojs/starlight/components';
 
 ## A quick look
 
-A request flows **URL → route → action → view → template → response**. A route maps a path to a module and action:
+A request flows through, in order: **URL, route, action, view, template, response**. A route maps a path to a module and action:
 
 ```php title="Routing/AppRouting.php"
 $routes->add('index', new Route('/', ['_module' => 'Default', '_action' => 'Index']));
 ```
 
-The action decides *what happens* and returns the **name of a view** — never HTML. One class handles every verb: Quiote maps `GET → executeRead`, `POST → executeWrite`, `PUT`/`PATCH → executeUpdate`, `DELETE → executeRemove`.
+The action decides *what happens* and returns the **name of a view** — never HTML. One class handles every verb: Quiote maps `GET` to `executeRead`, `POST` to `executeWrite`, `PUT`/`PATCH` to `executeUpdate`, `DELETE` to `executeRemove`.
 
 ```php title="Modules/Default/Actions/IndexAction.php"
 class IndexAction extends Action
@@ -56,7 +56,7 @@ class IndexAction extends Action
 }
 ```
 
-That naming convention is the thread that ties everything together — the `Index` action returning `'Success'` resolves to the `IndexSuccessView` class and the `IndexSuccess` template. [Build the whole thing, end to end →](/getting-started/your-first-app/)
+That naming convention is the thread that ties everything together — the `Index` action returning `'Success'` resolves to the `IndexSuccessView` class and the `IndexSuccess` template. [Build the whole thing, end to end](/getting-started/your-first-app/).
 
 ## Get started
 
@@ -84,5 +84,5 @@ See [Installation](/getting-started/installation/) for requirements and the [com
 </CardGrid>
 
 <Card title="Built for AI agents" icon="rocket">
-  Quiote ships a first-class **MCP server** — written in Quiote itself — that gives Claude Code, Cursor, or any MCP client authoritative, up-to-date knowledge of the framework: the docs, full-text search, and convention cards. [Set up the AI assistant →](/getting-started/mcp-assistant/)
+  Quiote ships a first-class **MCP server** — written in Quiote itself — that gives Claude Code, Cursor, or any MCP client authoritative, up-to-date knowledge of the framework: the docs, full-text search, and convention cards. [Set up the AI assistant](/getting-started/mcp-assistant/).
 </Card>

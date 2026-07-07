@@ -33,7 +33,7 @@ Log::setLevels([
 ]);
 
 // Sinks accept down to Debug; the per-category thresholds above do the gating.
-Log::addSink(new JsonStdoutSink(Level::Debug));                 // one JSON object per line → stdout
+Log::addSink(new JsonStdoutSink(Level::Debug));                 // one JSON object per line, written to stdout
 Log::addSink(new AnsiTextStreamSink(minLevel: Level::Debug));   // one coloured line per message
 
 Quiote\Runtime\Kernel::create([
@@ -72,7 +72,7 @@ You acquire a logger two ways:
 ```php
 use Quiote\Logging\Log;
 
-$log = Log::for($this);                  // category = FQCN, e.g. "App\Orders\OrderService" → "App.Orders.OrderService"
+$log = Log::for($this);                  // category = FQCN, e.g. "App\Orders\OrderService" becomes "App.Orders.OrderService"
 $log = Log::create('Quiote.Routing');    // an explicit category
 ```
 

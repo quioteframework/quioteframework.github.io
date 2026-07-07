@@ -7,10 +7,10 @@ import { Tabs, TabItem, Aside, Steps } from '@astrojs/starlight/components';
 
 The **Quiote Assistant MCP** is a [Model Context Protocol](https://modelcontextprotocol.io) server that gives an AI coding agent — Claude Code, Cursor, Copilot, or any MCP-capable client — authoritative, current knowledge of the Quiote framework, and, when pointed at a real app, the ability to inspect and scaffold it. Instead of relying on whatever a model happened to memorise (and Quiote is far too new and niche for that), the agent reads the real docs, searches them, reflects on the actual framework source, and can introspect or extend the project it's working in.
 
-It is, itself, **a Quiote application**. It dogfoods the framework's own [app-as-MCP-server capability](/plugins/official-packages/#quioteframeworkmcp) — the same `Quiote\Mcp\McpPlugin` any Quiote app can turn on — so the assistant is both a useful tool and the reference example of building an MCP server with Quiote.
+It is, itself, **a Quiote application**. It dogfoods the framework's own [app-as-MCP-server capability](/advanced/mcp-server/) — the same `Quiote\Mcp\McpPlugin` any Quiote app can turn on — so the assistant is both a useful tool and the reference example of building an MCP server with Quiote.
 
 <Aside type="caution" title="Pre-alpha">
-The assistant's capability surface has grown quickly and its shape can still change. It has no independent version scheme yet (`mcp.server_version` is still `0.1.0` despite everything below), and it isn't published anywhere — you run it from a checkout.
+The assistant's capability surface has grown quickly and its shape can still change. It has no independent version scheme yet (`mcp.server_version` is still `0.1.0` despite everything below). It isn't on Packagist — build it from a checkout, the PHAR, or the published Docker image (`ghcr.io/quioteframework/quiote-mcp-assistant`, tagged releases only).
 </Aside>
 
 ## What it exposes
@@ -69,13 +69,19 @@ Five tools work with no target app at all; they answer questions about the frame
 {
   "task": "add-plugin", "title": "Write and register a plugin",
   "steps": [
-    { "description": "Implement PluginInterface -- a name() and a register() -- and mark it with #[Plugin]...",
-      "code": "#[Plugin] final class HealthPlugin implements PluginInterface { ... }" },
-    { "description": "Activate it in Config/plugins.php...",
-      "code": "return [ ['class' => \\App\\Plugin\\HealthPlugin::class, 'enabled' => true] ];" }
+    { "description": "Implement PluginInterface -- a name() and a register()...",
+      "code": "final class HealthPlugin implements PluginInterface { ... }" },
+    { "description": "Activate it in the plugins list in Config/settings.php...",
+      "code": "'plugins' => [ \\App\\Plugin\\HealthPlugin::class ]," }
   ]
 }
 ```
+
+<Aside type="note">
+`register-mcp-tool`'s generated code currently calls a `PluginRegistrar::mcpTool()` method that no longer exists on the framework's `PluginRegistrar` (see [How it's built](#how-its-built) below) — a known staleness in this recipe from the same pinned-dependency gap. Don't copy it verbatim; register against `Quiote\Mcp\McpCatalog` directly instead.
+
+`add-plugin`'s own description text above ("a `name()` and a `register()`") is also stale for the same reason: `PluginInterface` no longer declares `name()` — a plugin only implements `register()`, and its diagnostic name comes from `#[Plugin(name: '...')]` instead (or `NamedPlugin` for a name that can't be a compile-time constant). See [Plugins and extensibility: Writing a plugin](/architecture/plugins/#writing-a-plugin) for the current shape; don't add a redundant `name()` method to a generated plugin class.
+</Aside>
 
 </TabItem>
 <TabItem label="describe_symbol">
@@ -136,6 +142,8 @@ Launch the assistant with `--target-app-dir=/path/to/your/app` and twelve more t
 
 **Scaffolding (write) tools** — `scaffold_module`, `scaffold_action`, `scaffold_plugin`, `scaffold_db_connection` generate real files in the target app; `run_console` invokes a `bin/quiote` console command. All default to **`dry_run: true`** and never overwrite an existing file — the agent (or you) has to explicitly opt into writing.
 
+`scaffold_action(module, action, verbs?, formats?, dry_run?)` takes a `formats` array (default `["html"]`) — each requested format gets its own `execute<Format>()` method on the generated action; `"html"` also gets a template, others (e.g. `"json"`) return their body directly. A format not yet declared in your `output_types` config is reported back as a ready-to-paste config snippet rather than being written for you.
+
 ### Prompts — scaffolding recipes
 
 Parameterized **prompt** templates that stitch the right convention card together with a step-by-step recipe, so the agent starts a task with the correct conventions already in hand:
@@ -151,7 +159,7 @@ Parameterized **prompt** templates that stitch the right convention card togethe
 
 ## Installing and running it
 
-The server is a standalone Quiote app (PHP 8.5+). It lives in its own repository and supports two transports plus a self-contained binary.
+The server is a standalone Quiote app (PHP 8.5+), built on the [PHP MCP SDK](https://github.com/modelcontextprotocol/php-sdk) (`mcp/sdk`, currently pinned to `^0.6.0`) plus `quioteframework/mcp`. It lives in its own repository and supports two transports, a self-contained binary, and a Docker image.
 
 <Steps>
 
@@ -181,19 +189,57 @@ The server is a standalone Quiote app (PHP 8.5+). It lives in its own repository
    php bin/quiote-assistant --target-app-dir=/path/to/your/app
    ```
 
+   `--target-app-dir` can be omitted if the launch directory (or an ancestor of it) contains a `.quiote.json` marker file (`{"app_dir": "relative/or/absolute/path"}`) or a `Config/settings.{php,xml,yaml,yml}` — the same `Quiote\Console\AppDirResolver` discovery `vendor/bin/quiote` itself uses. An explicit `--target-app-dir` always wins. The launcher also rejects a bare `--app-dir` flag with a "did you mean `--target-app-dir`?" error, since that's the flag name for the *target* app's own `bin/quiote` invocations, not the assistant's.
+
 </Steps>
 
 ### HTTP transport
 
-The assistant can also serve **Streamable HTTP** instead of (or alongside) stdio, useful for a shared/remote deployment rather than one subprocess per client. It speaks sessions (`Mcp-Session-Id`) and bearer auth (`mcp.auth_token`) — see the project's own `README.md` for the endpoint shape and how to configure it.
+The assistant can also serve **Streamable HTTP** instead of (or alongside) stdio, useful for a shared/remote deployment rather than one subprocess per client.
+
+- **Sessions** — `Mcp-Session-Id` is issued on the first call and must be repeated on every subsequent one. Sessions live in PHP **process memory**, so a plain `php -S` / classic PHP-FPM deployment (a fresh process per request) won't retain them — run it under a persistent-worker runtime such as FrankenPHP worker mode.
+- **Bearer auth, safe by default** — set `mcp.auth_token`, typically from an environment variable:
+  ```php
+  // Config/settings.php
+  'mcp.auth_token' => getenv('QUIOTE_ASSISTANT_MCP_TOKEN') ?: null,
+  ```
+  With no token configured, `Quiote\Mcp\Auth\StaticTokenAuthenticator` **rejects every HTTP request** — there's no accidental "wide open" default. For a trusted network or a reverse proxy that already authenticates, `mcp.auth = 'none'` is the explicit escape hatch.
+
+Example run:
+
+```bash
+QUIOTE_ASSISTANT_MCP_TOKEN=$(openssl rand -hex 32) php -S 0.0.0.0:8080 app/pub/index.php
+```
 
 ### A standalone PHAR
 
 `bin/build-phar` packages the assistant into a single `build/quiote-assistant.phar`, so a client can be pointed at one file instead of a checkout plus `composer install`.
 
+### Docker
+
+A `Dockerfile` (PHP 8.5-cli-alpine, `intl`/`xsl`/`pdo_sqlite` extensions, `--no-dev` composer install) packages the assistant as an image, published to `ghcr.io/quioteframework/quiote-mcp-assistant` on tagged releases (`:latest` and `:vX.Y.Z`). It ships only `pdo_sqlite` — none of the project-aware tools open a real database connection, so `pdo_mysql`/`pdo_pgsql` aren't needed in the image.
+
+```bash
+docker build -t quiote-assistant .
+docker run -i --rm quiote-assistant                       # knowledge tools only
+
+docker run -i --rm --user "$(id -u):$(id -g)" \
+  -v /path/to/your/project:/target \
+  quiote-assistant --target-app-dir=/target                # project-aware tools
+```
+
 ### Registering with a client
 
-Point your MCP client at the launcher. For a project-scoped Claude Code config (`.mcp.json`), or the `mcpServers` block any MCP client understands:
+Point your MCP client at the launcher — a PHP invocation, the PHAR, or the Docker image. The `mcpServers`/`servers` block shape is close to universal, but the exact file and a couple of details differ per client:
+
+<Tabs>
+<TabItem label="Claude Code">
+
+```bash
+claude mcp add quiote -- php /abs/path/to/quiote-mcp-assistant/bin/quiote-assistant --target-app-dir=.
+```
+
+Or drop the equivalent block into a project-scoped `.mcp.json`:
 
 ```jsonc
 {
@@ -209,53 +255,105 @@ Point your MCP client at the launcher. For a project-scoped Claude Code config (
 }
 ```
 
+</TabItem>
+<TabItem label="Cursor">
+
+The same `mcpServers` shape, in `.cursor/mcp.json` (project-scoped) or `~/.cursor/mcp.json` (global).
+
+</TabItem>
+<TabItem label="GitHub Copilot (VS Code)">
+
+`.vscode/mcp.json`, under a `servers` key with an explicit `"type": "stdio"`:
+
+```jsonc
+{
+  "servers": {
+    "quiote": {
+      "type": "stdio",
+      "command": "php",
+      "args": ["/abs/path/to/quiote-mcp-assistant/bin/quiote-assistant", "--target-app-dir=."]
+    }
+  }
+}
+```
+
+Copilot Chat only calls MCP tools in **Agent mode** — plain chat/edit mode ignores registered servers.
+
+</TabItem>
+<TabItem label="GitHub Copilot CLI">
+
+Picks up a project-scoped `.mcp.json` automatically; verify with `/mcp` inside the CLI session.
+
+</TabItem>
+<TabItem label="HTTP transport">
+
+```jsonc
+{
+  "mcpServers": {
+    "quiote": {
+      "type": "http",
+      "url": "https://your-host:8080/mcp",
+      "headers": { "Authorization": "Bearer YOUR_TOKEN" }
+    }
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+For the Docker image, `command`/`args` become `"docker"` and `["run", "-i", "--rm", "--user", "1000:1000", "-v", "/path/to/your/project:/target", "ghcr.io/quioteframework/quiote-mcp-assistant:latest", "--target-app-dir=/target"]`.
+
 Omit `--target-app-dir` if you only want the knowledge tools. Once registered, tools appear to the agent namespaced by the client (e.g. `mcp__quiote__describe_symbol`), the docs as readable resources, and the recipes as prompts.
 
 ## How it's built
 
 This is the part worth studying if you're building your own MCP server on Quiote — the assistant is deliberately a plain app with nothing special about it.
 
-**It's turned on by two settings.** `mcp.enabled = true`, plus both `Quiote\Mcp\McpPlugin` (which publishes the `mcp.*` settings and registers the `mcp:serve` transport) and the app's own `AssistantPlugin` activated in `Config/plugins.php` (each plugin class carries the required `#[Plugin]` attribute):
-
-```php
-// app/Config/plugins.php
-return [
-    ['class' => \Quiote\Mcp\McpPlugin::class, 'enabled' => true],
-    ['class' => \QuioteMcpAssistant\Mcp\AssistantPlugin::class, 'enabled' => true],
-];
-```
+**It's turned on by two settings.** `mcp.enabled = true`, plus both `Quiote\Mcp\McpPlugin` (which publishes the `mcp.*` settings and registers the `mcp:serve` transport) and the app's own `AssistantPlugin` listed in the `plugins` config key:
 
 ```php
 // app/Config/settings.php
+'plugins' => [
+    \Quiote\Mcp\McpPlugin::class,
+    \QuioteMcpAssistant\Mcp\AssistantPlugin::class,
+],
+
 'mcp.enabled'    => true,
 'mcp.transports' => ['stdio', 'http'],
 'mcp.server_name' => 'quiote-assistant',
 ```
 
-**Every capability is registered manually**, directly against `Quiote\Mcp\McpCatalog`. There's no attribute discovery for plain handler classes (only `#[Route]` actions carrying `#[McpTool]` are scanned) — and note that `PluginRegistrar::mcpTool()`/`mcpResource()`/`mcpPrompt()` convenience methods, which used to be the documented seam here, have since been **removed from the framework core**. `AssistantPlugin` now reproduces that convenience itself with small private wrapper methods that call `McpCatalog::addTool()`/`addResource()`/`addPrompt()` directly:
+<Aside type="caution" title="Pinned to an older plugin mechanism">
+The assistant currently depends on a `quioteframework/quiote` commit from before `#[Plugin]`-attribute activation and the dedicated `Config/plugins.php` file existed (see [Plugins and extensibility](/architecture/plugins/#registering-a-plugin) for the current, documented mechanism) — it hasn't been updated to `composer update`'s latest `dev-main` yet. Treat the snippet above as "what this specific reference app does today," not as current best practice for your own plugins.
+</Aside>
+
+**Every capability is registered manually**, directly against `Quiote\Mcp\McpCatalog`. There's no attribute discovery for plain handler classes (only `#[Route]` actions carrying `#[McpTool]` are scanned) — and note that `PluginRegistrar::mcpTool()`/`mcpResource()`/`mcpPrompt()` convenience methods, which used to be the documented seam here, have since been **removed from the framework core**. `AssistantPlugin` reproduces that convenience itself with small private wrapper methods, `mcpResource()`/`mcpTool()`/`mcpPrompt()`, that forward to `McpCatalog::addResource()`/`addTool()`/`addPrompt()`:
 
 ```php
 public function register(PluginRegistrar $registrar): void
 {
-    // …one addResource() per bundled doc, from the generated manifest…
-    $this->addResource(
+    // …one mcpResource() per bundled doc, from the generated manifest…
+    $this->mcpResource(
+        handlerFqcn: DocsResource::class,
         uri: 'quiote-docs://basics/routing',
-        handler: [DocsResource::class, 'read'],
+        method: 'read',
         name: 'basics_routing',
         description: 'Routing — Declaring routes…',
         mimeType: 'text/markdown',
     );
 
-    $this->addTool(
+    $this->mcpTool(
+        handlerFqcn: DescribeSymbolTool::class,
+        method: 'describe',
         name: 'describe_symbol',
-        handler: [DescribeSymbolTool::class, 'describe'],
         description: 'Reflection-based signature + docblock for a Quiote framework symbol…',
         inputSchema: [/* JSON Schema for { symbol } */],
     );
 }
 ```
 
-If you're writing your own MCP-serving plugin today, go straight to `McpCatalog` rather than looking for a `PluginRegistrar` method — see [Plugins and extensibility](/architecture/plugins/) for the rest of the seams that *are* still on `PluginRegistrar`.
+The private wrappers just combine `handlerFqcn` + `method` into the `[Class::class, 'method']` callable array `McpCatalog::addResource()`/`addTool()` actually take. If you're writing your own MCP-serving plugin today, go straight to `McpCatalog` rather than looking for a `PluginRegistrar` method — see [Plugins and extensibility](/architecture/plugins/) for the rest of the seams that *are* still on `PluginRegistrar`.
 
 <Aside type="tip" title="Exposing your own app over MCP">
 Add `Quiote\Mcp\McpPlugin` to `plugins`, set `mcp.enabled = true`, and register handlers against `McpCatalog` in your own plugin — or expose an existing `#[Route]` action as a tool by adding `#[McpTool]` to it and setting `mcp.expose_actions = true`.
@@ -276,9 +374,9 @@ If the sync has never been run, the server still boots — it simply exposes no 
 The repo ships three real MCP client smoke tests, each launching the server as a real subprocess (or over HTTP) and driving a full JSON-RPC conversation:
 
 ```bash
-php tools/mcp-smoke-client.php          # stdio: full read-only surface, self-targeted at app/
-php tools/mcp-smoke-client-phase4.php   # scaffolding writes + run_console, against a throwaway app
-php tools/mcp-http-smoke-client.php     # HTTP transport: sessions + bearer auth
+php tools/mcp-smoke-client.php                          # stdio: full read-only surface, self-targeted at app/
+php tools/mcp-smoke-client-scaffold.php /path/to/scratch/app   # scaffolding writes + run_console, against a throwaway app
+php tools/mcp-http-smoke-client.php                      # HTTP transport: sessions + bearer auth
 ```
 
-Run them before pointing an agent at the server — they cover every tool, resource, and prompt, plus the project-aware and scaffolding tools against a real (if disposable) app.
+The scaffold smoke test takes the scratch app's path as an explicit argument — never point it at this repo's own `app/`. Run them before pointing an agent at the server — they cover every tool, resource, and prompt, plus the project-aware and scaffolding tools against a real (if disposable) app.

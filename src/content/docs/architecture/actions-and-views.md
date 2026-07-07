@@ -15,13 +15,17 @@ An action extends `Quiote\Action\Action`. The base class defines **no** `execute
 |---|---|---|
 | `getCredentials()` | `null` | Required credential(s) for a secure action |
 | `isSecure()` | `false` | Whether the action requires authorization |
-| `isSimple()` | `false` | Skip validation for this action |
+| `isSimple()` | `false` | Skip **all** execution for this action — see below |
 | `isCacheable()` | `false` | Whether the action/view output can be cached |
 | `validate(WebRequest)` | `true` | Manual validation hook |
 | `registerValidators()` | loads compiled/XML | Declare validators in PHP |
 | `getDefaultViewName()` | `'Input'` | View name when execution returns nothing |
 | `handleError(WebRequest)` | `'Error'` | View name on validation failure |
 | `setAttribute($name, $value)` | — | Pass data to the view |
+
+### `isSimple()` means no action code runs at all
+
+`isSimple()` is stronger than "skip validation." When it returns `true`, `ActionExecutor`/`SlotDispatcher` never call `ActionResolver::execute()` at all — no `execute*()` method, no `validate()`/`validate{Method}()`, no `registerValidators()`. `getDefaultViewName()` is used directly as the view token, and rendering proceeds straight to the view. There is no code path left inside a simple action that could read attacker-controlled (or even developer-supplied) input, because that code path never executes — reach for it for actions that are genuinely static or purely presentational, most commonly [slots](/basics/templates-and-rendering/#slots-embedding-one-action-in-another). An action that needs its `execute*()` to run — even just to read arguments with nothing else going on — must not override `isSimple()` to return `true`.
 
 ### Which method runs
 
@@ -84,6 +88,8 @@ return 'Success';
 
 The executor snapshots the action's attributes after it runs and hands that snapshot to the view. The action object itself never crosses into the view or template.
 
+This `setAttribute()` is the action/view's own — a plain mutable attribute holder — not `WebRequest::setAttribute()`, which is a distinct, immutable method on the request object itself; see [Mutating a request](/basics/requests-and-responses/#mutating-a-request). For page-level CSS/JS specifically, reach for `View::addCss()`/`addJavascript()` instead of an attribute — see [Page assets](/basics/templates-and-rendering/#page-assets-css-and-javascript).
+
 ## Views
 
 A view extends `Quiote\View\View`. Like actions, the method that runs depends on context — here, on the **output type**.
@@ -92,9 +98,9 @@ A view extends `Quiote\View\View`. Like actions, the method that runs depends on
 
 `ActionExecutor::selectViewMethod()` picks `execute<OutputType>()` if it exists, otherwise `execute()`:
 
-- Output type `html` → `executeHtml()`
-- Output type `json` → `executeJson()`
-- Fallback → `execute()`
+- Output type `html` calls `executeHtml()`
+- Output type `json` calls `executeJson()`
+- Fallback calls `execute()`
 
 This is how one view serves multiple formats:
 

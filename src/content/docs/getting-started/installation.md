@@ -17,7 +17,7 @@ Optional extensions that unlock additional functionality:
 | `tokenizer` | More efficient config cache generation |
 | `session` | Built-in session handling |
 | `PDO` | PDO-based database connectors |
-| `iconv` | Charset conversion beyond ISO-8859-1 ↔ UTF-8 |
+| `iconv` | Charset conversion between ISO-8859-1 and UTF-8 |
 | `APCu` | APCu-backed config cache for persistent workers |
 
 ## Installing via Composer

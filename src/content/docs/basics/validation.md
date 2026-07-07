@@ -111,7 +111,7 @@ Reading a parameter that no validator approved throws `UnvalidatedParameterAcces
 
 ## The strict lockdown
 
-For a non-simple action with **no validator configuration at all**, `ValidationMiddleware` clears every parameter before the action runs. The action sees no input rather than unvalidated input. To let an action read input, you must declare validators for it.
+For a non-simple action with **no validator configuration at all**, `ValidationMiddleware` clears every parameter before the action runs — and, deny-by-default, every header, cookie, and uploaded file too, not just query/body parameters. Headers are exactly as attacker-controlled as any other request input; an action with zero validators of any kind gets none of them. The action sees no input rather than unvalidated input. To let an action read a parameter, header, cookie, or file, declare a validator scoped to that source (see [Advanced validation](/advanced/advanced-validation/) for non-`parameters` sources).
 
 Actions that genuinely take no input — a static page, say — can mark themselves simple:
 
@@ -122,17 +122,27 @@ public function isSimple(): bool
 }
 ```
 
-A simple action skips validation entirely and takes the lighter dispatch path.
+`isSimple()` is stronger than "skip validation": no `execute*()`, `validate()`, or `registerValidators()` runs at all for that action — see [Actions and views](/architecture/actions-and-views/#issimple-means-no-action-code-runs-at-all) for the full guarantee. It's the mechanism [slots](/basics/templates-and-rendering/#slots-embedding-one-action-in-another) lean on most: a purely presentational slot action has no business-logic code path left to misuse.
 
 ## What happens on failure
 
-When validation fails, `ValidationMiddleware`:
+When validation *fails* — a validator or `validate()` returns `false`/reports an error, not an exception — `ValidationMiddleware`:
 
 1. Resolves the action's error view — `handleWriteError()` / `handleError()`, defaulting to the `Error` view.
 2. Renders it in the negotiated output type with HTTP 400.
 3. For JSON, returns an [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457) problem document (`application/problem+json`) instead of an HTML page.
 
-On an HTML form submission, `FormPopulationMiddleware` also repopulates the submitted values into the re-rendered form so the user does not lose their input.
+On an HTML form submission, `FormPopulationMiddleware` also repopulates the submitted values into the re-rendered form — see [Sticky forms after a partial validation failure](#sticky-forms-after-a-partial-validation-failure) below for how that survives strict pruning.
+
+:::caution[A throwing validator is a 500, not a 400]
+A validator (or a manual `validate*()` hook) that **throws** is not treated as "the user submitted something invalid" — it's logged at error level and rethrown, reaching `ErrorHandlingMiddleware` and becoming a 500 (see [Error handling](/architecture/error-handling/)), not a graceful 400. A validator crashing is a framework/app bug; conflating it with an ordinary validation failure would also skip the pruning that normally scrubs unvalidated data before the exception is caught. Return `false` (or use the validator's own failure mechanism) for an expected validation failure — reserve exceptions for genuinely unexpected errors.
+:::
+
+## Sticky forms after a partial validation failure
+
+Strict pruning has one legitimate-UX cost: if a field has two validators (say, length and not-numeric) and a submitted value passes one and fails the other, the field's value is scrubbed from the request entirely — even though the field name stays whitelisted — because `getParameter()` must never return a partially-invalid value. That's correct for business logic, but it means a re-rendered HTML form would lose exactly the value the user needs to see to fix their mistake.
+
+`ValidationManager::getRawParameterSnapshot()` captures query and body parameters *before* any pruning happens, held on the validation manager itself — deliberately **not** on `WebRequest`, so it is not reachable via `getParameter()`/`getParameters()` and can't be mistaken for a validated read. `FormPopulationMiddleware`'s HTML error-view path uses this snapshot to redisplay the submitted value, scoped to `html` output only — a JSON/API client is expected to hold its own state rather than have the framework redisplay it.
 
 ## Manual validation
 
@@ -148,4 +158,4 @@ public function validateWrite(WebRequest $rd): bool
 }
 ```
 
-Manual validation runs after the declarative validators and contributes to the same pass/fail decision.
+Manual validation runs after the declarative validators and contributes to the same pass/fail decision. Throwing from here follows the same rule as a throwing validator above — it's a 500, not a failed validation.
