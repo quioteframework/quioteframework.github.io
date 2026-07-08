@@ -230,6 +230,8 @@ $t->getCurrentLocaleIdentifier();   // may be the closest available match
 
 `setLocale()` resolves to the closest available locale, so requesting `de_DE` when only `de` is configured lands on `de`. For a one-off in another locale, pass the locale argument to `_()` / `_d()` / etc. rather than switching globally.
 
+Matching follows RFC 4647 basic filtering (via `intl`'s `Locale::filterMatches()`): a request can resolve to more than one configured locale — for example, requesting `nl` when both `nl_BE` and `nl_NL` are available. Quiote treats that as ambiguous and throws rather than guessing, so keep `available_locales` free of ranges that overlap in ways you don't want resolved automatically.
+
 Locale-suffixed templates are also supported: when translation is on, the [template layer](/basics/templates-and-rendering/) looks for a locale variant of a template before the base one, so you can localize whole templates as well as strings.
 
 ## Worker-mode note

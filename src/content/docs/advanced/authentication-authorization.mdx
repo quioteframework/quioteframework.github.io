@@ -7,7 +7,7 @@ import { Tabs, TabItem } from '@astrojs/starlight/components';
 
 Quiote's security model has three moving parts: a **user** object that holds authentication state and credentials, **actions** that declare whether they are secure and what they require, and `SecurityMiddleware`, which decides — before the action runs — whether to allow it or forward the request elsewhere.
 
-As with the rest of the framework, authentication itself is unopinionated: Quiote gives you the mechanism (is-authenticated, has-credentials, forward-on-denial) and leaves *how a user proves who they are* to you.
+Establishing *who the user is* — checking a password, validating a bearer token, completing an OIDC login — is a separate concern from that authorization decision, and stays optional: you can still verify credentials yourself and call `setAuthenticated(true)` directly, or reach for the **[`quioteframework/auth`](/plugins/official-packages/#quioteframeworkauth)** family of packages, which now ship real, tested implementations of the common mechanisms (form login, HTTP Basic, JWT bearer tokens, OIDC). Either path ends the same way: an `ISecurityUser` marked authenticated, which is all `SecurityMiddleware` and the rest of this page care about. The authentication packages are covered in [Authenticating with the auth packages](#authenticating-with-the-auth-packages) below; everything else on this page — the user hierarchy, securing actions, CSRF, rate limiting — applies regardless of which path establishes identity.
 
 ## The user hierarchy
 
@@ -70,6 +70,11 @@ Authentication state and credentials persist in session storage. Two security-re
 
 - **`setAuthenticated(true)` regenerates the session id** on the unauthenticated-to-authenticated transition, defeating session fixation.
 - **`isAuthenticated()` reads the value loaded once at init** and does not re-read storage mid-request, avoiding a class of fail-open bugs.
+
+Two more hooks exist specifically for the token/service-identity path used by `quioteframework/auth-jwt` and `auth-oauth` (see below):
+
+- **`isTokenDerived()` / `markTokenDerived(bool)`** — a persisted marker meaning "this identity's credentials are re-derived from a token or the database every request, not read back from the session." When set, `initialize()` skips rehydrating stale session credentials/roles, since `AuthenticationManager` re-grants them fresh from the token on every request. It's cleared on `setAuthenticated(false)` and `reset()`.
+- **`restoreIdentityFromStorage()`** plus the `CORE_IDENTITY_KEYS` class constant — a hook for worker-mode cold starts, where a fresh `SecurityUser` is built via `restoreContext()` rather than `initialize()`. A subclass opts in by declaring `protected const CORE_IDENTITY_KEYS = ['legacy_user_id', ...];` and calling the hook explicitly; nothing calls it automatically.
 
 ### Credentials: AND / OR
 
@@ -169,7 +174,7 @@ Here `photomoderator` inherits `member`'s `photos.rate` and `guest`'s `photos.li
 
 `rbac_definitions.*` is compiled and cached like the rest of Quiote's config; it is read once when the `RbacSecurityUser` initializes (from `core.config_dir`, overridable with the user's `definitions_file` parameter).
 
-## Authenticating a user
+## Authenticating a user manually
 
 Authentication is your code — verify a password, validate a token, complete an OAuth flow — and then tell the user object the result. A login action, in outline:
 
@@ -189,7 +194,153 @@ public function executeWrite(WebRequest $rd)
 }
 ```
 
-Quiote does not ship a password-checking or token-parsing implementation — `credentialsAreValid()` is yours. What it provides is the state model (`setAuthenticated`, `grantRole`) and the enforcement below.
+This path needs no packages at all — `credentialsAreValid()` is entirely yours, and the framework only provides the state model (`setAuthenticated`, `grantRole`) and the enforcement below. Reach for it when your credential check is simple or already exists. For the common mechanisms — password forms, HTTP Basic, JWT bearer tokens, OIDC — the `quioteframework/auth` packages below do the same job with tested, reusable code instead of a hand-rolled `credentialsAreValid()`.
+
+## Authenticating with the auth packages
+
+Three packages — **[`quioteframework/auth`](/plugins/official-packages/#quioteframeworkauth)**, **`auth-jwt`**, and **`auth-oauth`** — build a stateless authenticator model on top of framework-wide contracts in `Quiote\Security\Auth\` (referenced by `SecurityUser`/`RbacSecurityUser` directly, so core carries the contracts without depending on any of the three packages):
+
+| Contract | Purpose |
+|---|---|
+| `AuthenticatorInterface` | One implementation per credential mechanism: `supports(request): bool`, `authenticate(request): Passport` (throws `AuthenticationException` on invalid/absent credentials), `onFailure(exception): ?ResponseInterface`. |
+| `Passport` | A resolved identity plus credentials/roles, a `stateless` flag, and an optional `TokenClaims`. |
+| `TokenClaims` | Validated token claims: `subject`, the raw claim array, and a `ClientType`. |
+| `ClientType` | Enum of `User` \| `Service`. |
+| `ClientTypeResolverInterface` | Derives `ClientType` from raw claims (the RFC 9068 rule: `service` when `sub` equals `client_id`/`azp`). |
+| `UserIdentity` | Minimal identity contract: `getIdentifier()`, `getRoles()`. |
+| `UserProviderInterface` | `loadByIdentifier(string)` and `loadByToken(TokenClaims)`. |
+| `PasswordHasherInterface` | `hash()`, `verify()`, `needsRehash()`. |
+| `EntryPointInterface` | `start(request, exception): ResponseInterface` — the failure response for a firewall (a 401 challenge, a login redirect, ...). |
+| `AuthenticationException` | Thrown by an authenticator on invalid/absent credentials. |
+
+A **firewall** (`Firewall`) pairs a path pattern with an ordered chain of authenticators and an entry point; a **`FirewallMap`** picks the matching firewall for a request; `AuthenticationManager` runs the matched firewall's authenticator chain and, on success, applies the resulting `Passport` to the request's `SecurityUser`/`RbacSecurityUser`. Two middleware drive this — `StatelessAuthenticationMiddleware` (HTTP Basic/bearer) and `SessionAuthenticationMiddleware` (form login) — both contributed by `AuthPlugin`, which also registers a default `PasswordHasherInterface` and an **empty** `FirewallMap`. With no `FirewallMap` of your own, both middleware are a complete no-op — installing the package changes nothing until you register firewalls.
+
+### `quioteframework/auth` — the foundation
+
+Form login, HTTP Basic, credential providers, and the firewall machinery above:
+
+- **Password hashing** — `Hasher\DefaultPasswordHasher`: argon2id by default, falling back to bcrypt if the PHP build lacks argon2 support.
+- **Identity and providers** — `Identity\InMemoryUserIdentity` (a plain value object implementing the package's `PasswordProtectedUserIdentity extends UserIdentity`, adding `getPasswordHash()`); `Provider\InMemoryUserProvider` (a static config array), `Provider\PdoUserProvider` (a single users table via `DatabaseManager`), `Provider\CallableUserProvider` (app-supplied closures).
+- **Authenticators** — `Authenticator\HttpBasicAuthenticator` (always stateless); `Authenticator\FormLoginAuthenticator` (session-backed, optionally taking a `Quiote\Security\Csrf\CsrfManager` and/or a `Quiote\Security\RateLimit\LoginThrottle` — both soft dependencies, pass `null` to skip either).
+- **Entry points** — `EntryPoint\HttpChallengeEntryPoint` (401 + `WWW-Authenticate` + an RFC 9457 Problem Details body, matching the MCP server's existing challenge shape); `EntryPoint\LoginRedirectEntryPoint` (302 back to the login path with `?error=1`) — this fires only when a login *attempt* itself fails, not on plain unauthenticated browsing, which is still `SecurityMiddleware`'s existing `LoginForward`/`SecureForward` path from [How enforcement works](#how-enforcement-works), unchanged.
+
+**HTTP Basic with in-memory users**, wired in an app plugin:
+
+```php
+$hasher = new DefaultPasswordHasher();
+$provider = new InMemoryUserProvider([
+    'alice@example.com' => ['password_hash' => $hasher->hash('secret'), 'roles' => ['admin']],
+]);
+$firewall = new Firewall(
+    'api', '^/api/',
+    [new HttpBasicAuthenticator($provider, $hasher)],
+    new HttpChallengeEntryPoint(),
+    stateless: true,
+);
+$registrar->service(FirewallMap::class, static fn() => new FirewallMap([$firewall]));
+```
+
+**Form login with CSRF and throttling**:
+
+```php
+$authenticator = new FormLoginAuthenticator(
+    $provider, $hasher,
+    checkPath: '/login',
+    csrf: new CsrfManager($context),
+    throttle: new LoginThrottle(new PdoRateLimiterStorage(...)),
+);
+$firewall = new Firewall('main', '^/', [$authenticator], new LoginRedirectEntryPoint('/login'));
+```
+
+`FormLoginAuthenticator` runs its own CSRF check via the optional `CsrfManager`, even though `CsrfValidationMiddleware` already checks every unsafe request generically (see [CSRF protection](#csrf-protection) below). That's deliberate redundancy, not an oversight: the authenticator's own check stays correct even if the CSRF middleware is disabled or reordered for some other route.
+
+### `quioteframework/auth-jwt` — bearer/JWT resource server
+
+Adds `firebase/php-jwt:^7.1`. Validates bearer tokens rather than issuing them — this package is for an API that *accepts* JWTs, not one that mints them.
+
+- `TokenValidatorInterface` — `validate(string $token): array` (raw claims), throwing `AuthenticationException` on an invalid token.
+- `JwtTokenValidator` — verifies the JWS via either a single `Key` (a shared HS256 secret) or a JWKS-backed `CachedKeySet` (RS256/ES256, with rotation); enforces `iss`/`aud` itself, since the underlying library only checks `exp`/`nbf`/`iat`.
+- `ClientTypeResolver` — the default `ClientTypeResolverInterface` (the RFC 9068 rule above).
+- `BearerTokenAuthenticator` — always stateless; resolves identity via `UserProviderInterface::loadByToken()`.
+- `JwtAuthPlugin` registers only the default `ClientTypeResolverInterface` — there's no safe default for `TokenValidatorInterface`/`BearerTokenAuthenticator`, since both need app-specific secrets or a JWKS URI.
+
+```php
+$validator = new JwtTokenValidator(
+    new CachedKeySet($jwksUri, $httpClient, $requestFactory, $cachePool),
+    issuer: 'https://issuer.example.com',
+    audience: 'my-api',
+);
+$authenticator = new BearerTokenAuthenticator($validator, new ClientTypeResolver(), $userProvider);
+$firewall = new Firewall('api', '^/api/', [$authenticator], new HttpChallengeEntryPoint(), stateless: true);
+```
+
+### `quioteframework/auth-oauth` — OIDC client and machine-to-machine
+
+Adds `league/oauth2-client:^2.9`. No plugin ships with this package — nothing in it has a safe framework-wide default, since every piece needs app-specific secrets or endpoints.
+
+- `OidcClient` wraps `league/oauth2-client`'s `GenericProvider`. PKCE S256 is **hardcoded**, not app-configurable — OAuth 2.1 mandates it. `buildAuthorizationRequest()` generates the state/PKCE-verifier/nonce and the redirect URL; `exchangeCode()` performs the token exchange.
+- `OidcAuthorizationState` / `OidcAuthorizationRequest` are value objects for the state round-trip; `OidcStateStorage` persists a single in-flight state in session storage, keyed by its own `state` value, and `consume()` removes it on read (one-time use).
+- `OidcAuthenticator` is the **callback leg only** — `supports()` matches the callback path plus the presence of `code`/`state`. It verifies `state` in constant time, exchanges the code, validates the ID token via an injected `TokenValidatorInterface` (reusing `auth-jwt` rather than a second JWT stack) plus its own `nonce` check, then resolves identity via `UserProviderInterface::loadByToken()`. It does **not** initiate the flow — building the authorization redirect with `OidcClient::buildAuthorizationRequest()` is left to your own login-initiation action. `at_hash` is deliberately not checked: per OIDC Core §3.1.3.6 it's only *required* when an access token comes back from the authorization endpoint (implicit/hybrid flows), and `OidcAuthenticator` only implements the Authorization Code exchange at the token endpoint, where it's optional — and computing it would need the ID token's signing algorithm, which isn't exposed through `TokenValidatorInterface`'s return shape.
+- `ClientCredentialsClient` issues outbound M2M access tokens — unrelated to inbound request auth; pair it with `auth-jwt`'s `BearerTokenAuthenticator` on the *receiving* service.
+- `IntrospectionClient` is an RFC 7662 token-introspection POST helper, for revocation-sensitive paths.
+
+**OIDC login** — your login action initiates, `OidcAuthenticator` handles the callback:
+
+```php
+// Login action:
+$client = new OidcClient($clientId, $clientSecret, $redirectUri, $authorizeUrl, $tokenUrl);
+$request = $client->buildAuthorizationRequest();
+(new OidcStateStorage($context))->store($request->getState());
+return redirect($request->getAuthorizationUrl());
+
+// Firewall (callback path):
+$authenticator = new OidcAuthenticator($client, $idTokenValidator, $userProvider, $stateStorage, '/callback');
+```
+
+### Configuring firewalls with `security.xml`
+
+Building `FirewallMap` by hand in a plugin's `register()`, as in the examples above, needs no config file at all and is the simplest path for most apps. If you'd rather declare firewalls in config, `Config\SecurityConfigHandler` parses a `security.xml`/`.php`/`.yaml` file into a canonical array that `Config\FirewallFactory` turns into a live `FirewallMap`:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<ae:configurations xmlns:ae="http://quiote.dev/quiote/config/global/envelope/1.1"
+                    xmlns="http://quiote.dev/quiote/config/parts/security/1.1">
+  <ae:configuration>
+    <password_hashers algorithm="argon2id"/>
+    <providers>
+      <provider name="app" type="pdo" connection="main" table="users"
+                identifier-column="email" password-column="password_hash"/>
+    </providers>
+    <firewalls>
+      <firewall name="api" pattern="^/api/" stateless="true" entry-point="challenge">
+        <authenticator ref="http_basic"/>
+      </firewall>
+      <firewall name="main" pattern="^/" provider="app" entry-point="login">
+        <authenticator ref="form_login"/>
+      </firewall>
+    </firewalls>
+  </ae:configuration>
+</ae:configurations>
+```
+
+:::caution[`security.xml` needs a handler entry, and `ref`/`provider` values are not auto-wired]
+`SecurityConfigHandler` is **not** wired into the framework's default `config_handlers.xml` — that file is core-default-only. Your app must add its own `<handler pattern="..." class="Quiote\Security\Auth\Config\SecurityConfigHandler">` entry to its own `config_handlers` config, exactly like any other non-core-default config kind (`RbacDefinitionConfigHandler` uses the identical mechanism, just pre-wired because it's core).
+
+More importantly, `authenticator ref="..."` and `provider="..."` values are **not** resolved automatically from a DI container — `FirewallFactory` takes explicit `array<string, AuthenticatorInterface>` and `array<string, EntryPointInterface>` registries that your app assembles itself. There is no "ref string → container lookup" magic; this is a deliberate choice to keep wiring visible and testable. In practice, using `security.xml` still means writing a small amount of PHP to build those registries before calling `FirewallFactory::build()` — it does not remove the code from the examples above, it just moves the pattern/authenticator-chain shape into config.
+:::
+
+### Middleware ordering
+
+`StatelessAuthenticationMiddleware` and `SessionAuthenticationMiddleware` are placed with explicit `before:`/`after:` anchors rather than phase/priority tuning: `StatelessAuthenticationMiddleware` is registered `before: Quiote\Middleware\SessionMiddleware::class`, and `SessionAuthenticationMiddleware` is registered `after: RoutingMiddleware::class, before: SecurityMiddleware::class`. See [The middleware pipeline](/architecture/middleware-pipeline/) for the full default stack and [Writing custom middleware](/advanced/custom-middleware/#built-in-anchor-points) for the general anchor mechanism — the reason both use explicit anchors rather than a `phase` is that `phase` alone can't express "before `SessionMiddleware`" here: phase is the primary sort key, and `bootstrap` (where `SessionMiddleware` sits) is always ordered ahead of the later phases regardless of priority. An explicit `before:`/`after:` anchor is the only way to guarantee an order that crosses a phase boundary.
+
+### A wiring gap worth knowing about: `auth.sessionless`
+
+`StatelessAuthenticationMiddleware` sets the `auth.sessionless` request attribute when a firewall is `sessionless: true` or the resolved `ClientType` is `Service`. As of this writing, `SessionMiddleware` only checks the older, JWT-specific `jwt.skip_session` attribute — **not** `auth.sessionless` — so setting it on a stateless/service-token request has no runtime effect yet beyond being available for your own code to read. It's the one piece of this wiring that doesn't fully connect end to end without a follow-up change to `SessionMiddleware`; don't rely on `auth.sessionless` to actually skip session handling until that lands.
+
+### What's not covered yet
+
+- **`Quiote\Mcp\Auth\McpAuthenticatorInterface`** (a simple `authenticate(string $token): bool` shape used by `quioteframework/mcp`'s `McpAuthMiddleware`) has not been generalized onto `AuthenticatorInterface` — it remains its own thing for now, even though `McpAuthMiddleware`'s inline 401/Problem-Details logic is structurally identical to `HttpChallengeEntryPoint`.
+- Migrating an existing hand-rolled JWT setup onto `auth-jwt`'s contracts (the `tokenDerived` marker, `UserProviderInterface::loadByToken()`, and so on) is an app-by-app decision — there's no automatic migration path, and doing it for a live production app needs its own explicit scoping.
 
 ## Securing an action
 

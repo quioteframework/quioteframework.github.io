@@ -38,6 +38,15 @@ This order is not hand-maintained: each middleware carries a `#[Middleware(phase
 
 After the attribute-ordered stack, any middleware added imperatively with `MiddlewareCatalog::register()` is spliced in at its requested position, followed by a terminal sentinel that throws if the pipeline ever runs off the end without producing a response.
 
+### Where the auth packages insert themselves
+
+The optional **[`quioteframework/auth`](/plugins/official-packages/#quioteframeworkauth)** package contributes two more middleware, both a no-op until an app registers a populated `FirewallMap` (see [Authenticating with the auth packages](/advanced/authentication-authorization/#authenticating-with-the-auth-packages)):
+
+- **`StatelessAuthenticationMiddleware`** (HTTP Basic/bearer) — registered `before: SessionMiddleware`, so it runs ahead of session start.
+- **`SessionAuthenticationMiddleware`** (form login) — registered `after: RoutingMiddleware, before: SecurityMiddleware`.
+
+Both use explicit `before:`/`after:` anchors rather than `phase`/`priority` tuning, because `phase` alone can't place something ahead of `SessionMiddleware`: `bootstrap` (where `SessionMiddleware` sits) always sorts ahead of the later phases regardless of priority, so an anchor is the only way to guarantee an order that crosses a phase boundary. This is a general rule, not specific to authentication — see [Writing custom middleware](/advanced/custom-middleware/#built-in-anchor-points).
+
 ## What each middleware does
 
 **ErrorHandlingMiddleware** — the outermost wrapper. Catches any `Throwable` from anything below it and renders a response (a developer error page when `core.developer_exceptions` is on, a safe generic page otherwise). It also logs the failure with request context.

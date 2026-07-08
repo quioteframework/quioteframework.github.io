@@ -19,6 +19,9 @@ Every `Plugin::class` below is only *activated* by listing it in `plugins.*` bec
 
 | Package | Provides | Carries |
 |---|---|---|
+| `quioteframework/auth` | Form login, HTTP Basic, firewalls, password hashing | — |
+| `quioteframework/auth-jwt` | Bearer/JWT resource-server authentication | `firebase/php-jwt` |
+| `quioteframework/auth-oauth` | OIDC login + machine-to-machine tokens | `league/oauth2-client` |
 | `quioteframework/csrf` | CSRF token injection + validation | `symfony/security-csrf` |
 | `quioteframework/ratelimit` | Login throttling / rate limiting | `symfony/rate-limiter` |
 | `quioteframework/whoops` | The developer exception page | `filp/whoops` |
@@ -38,6 +41,36 @@ Every `Plugin::class` below is only *activated* by listing it in `plugins.*` bec
 | `quioteframework/session-gcs` | Google Cloud Storage session storage | — |
 
 ## Security & web
+
+### `quioteframework/auth`
+
+Firewall-based authentication: form login and HTTP Basic, credential providers (`InMemoryUserProvider`, `PdoUserProvider`, `CallableUserProvider`), password hashing (`DefaultPasswordHasher`, argon2id with a bcrypt fallback), and the `Firewall`/`FirewallMap`/`AuthenticationManager` machinery that runs an authenticator chain and applies the result to `SecurityUser`/`RbacSecurityUser`. `AuthPlugin` registers a default `PasswordHasherInterface` and an **empty** `FirewallMap` — both of its middleware (`StatelessAuthenticationMiddleware`, `SessionAuthenticationMiddleware`) are a complete no-op until your app registers a populated `FirewallMap`.
+
+```bash
+composer require quioteframework/auth
+```
+
+Optionally add a `security.xml`/`.php`/`.yaml` config file (`Config\SecurityConfigHandler` + `Config\FirewallFactory`) instead of wiring `FirewallMap` by hand — see [Authenticating with the auth packages](/advanced/authentication-authorization/#authenticating-with-the-auth-packages).
+
+### `quioteframework/auth-jwt`
+
+Bearer/JWT resource-server authentication on top of `quioteframework/auth`'s contracts: `JwtTokenValidator` (HS256 via a shared secret, or RS256/ES256 via a JWKS-backed `CachedKeySet` with rotation), the default RFC 9068 `ClientTypeResolver` (service vs. user tokens), and `BearerTokenAuthenticator`. `JwtAuthPlugin` registers only the `ClientTypeResolverInterface` default — the validator and authenticator need app-specific secrets, so there's no safe default to wire automatically.
+
+```bash
+composer require quioteframework/auth-jwt
+```
+
+See [`quioteframework/auth-jwt` — bearer/JWT resource server](/advanced/authentication-authorization/#quioteframeworkauth-jwt--bearerjwt-resource-server).
+
+### `quioteframework/auth-oauth`
+
+OIDC login (`OidcClient`, `OidcAuthenticator` for the callback leg, `OidcStateStorage`) and machine-to-machine tokens (`ClientCredentialsClient`, `IntrospectionClient`), also built on `quioteframework/auth`'s contracts and reusing `auth-jwt`'s `TokenValidatorInterface` for ID token validation rather than a second JWT stack. PKCE S256 is hardcoded (OAuth 2.1 mandates it). No plugin ships with this package — every piece needs app-specific secrets or endpoints, so there's nothing safe to register by default.
+
+```bash
+composer require quioteframework/auth-oauth
+```
+
+See [`quioteframework/auth-oauth` — OIDC client and machine-to-machine](/advanced/authentication-authorization/#quioteframeworkauth-oauth--oidc-client-and-machine-to-machine).
 
 ### `quioteframework/csrf`
 

@@ -35,6 +35,7 @@ Every middleware defaults to on and can be disabled via `<middleware_config>` (s
 | 10 | CsrfInjectionMiddleware | `core.csrf.*` |
 | 11 | CsrfValidationMiddleware | `core.csrf.*` |
 | 12 | SecurityMiddleware | `core.use_security` |
+| — | StatelessAuthenticationMiddleware / SessionAuthenticationMiddleware *(optional, `quioteframework/auth`)* | — (no-op until a `FirewallMap` is registered) |
 | 13 | ValidationMiddleware | `core.expose_validation_errors_header`, `validation.*` |
 | 14 | SlotMiddleware | — |
 | 15 | DispatchMiddleware | `core.cache_enabled`, `core.use_cache`, response-header keys |
@@ -289,6 +290,14 @@ Decides, before dispatch, whether a request may run its action — forwarding to
 | `core.use_security` | `true` | If `false`, `SecurityDecision::Allow` is forced unconditionally — `SecurityService::decide()` is never consulted and all security checks are bypassed. |
 
 Per-action security is declared with `isSecure()` / `getCredentials()` — see [Authentication & authorization](/advanced/authentication-authorization/).
+
+## StatelessAuthenticationMiddleware / SessionAuthenticationMiddleware
+
+Optional — contributed by the **[`quioteframework/auth`](/plugins/official-packages/#quioteframeworkauth)** package's `AuthPlugin`, not part of the default kernel stack. `StatelessAuthenticationMiddleware` (HTTP Basic/bearer authenticators) is anchored `before: SessionMiddleware`; `SessionAuthenticationMiddleware` (form login) is anchored `after: RoutingMiddleware, before: SecurityMiddleware` — see [Where the auth packages insert themselves](/architecture/middleware-pipeline/#where-the-auth-packages-insert-themselves).
+
+Both run the matched `Firewall`'s authenticator chain via `AuthenticationManager` and, on success, apply the resulting `Passport` to the request's `SecurityUser`/`RbacSecurityUser` — before `SecurityMiddleware` ever checks `isAuthenticated()`/credentials.
+
+**No settings of their own.** `AuthPlugin` registers an **empty** `FirewallMap` by default, so both middleware are a complete no-op — nothing to disable — until an app registers its own populated `FirewallMap` (by config via `security.xml`/`SecurityConfigHandler`, or by hand in a plugin). See [Authenticating with the auth packages](/advanced/authentication-authorization/#authenticating-with-the-auth-packages).
 
 ## ValidationMiddleware
 
