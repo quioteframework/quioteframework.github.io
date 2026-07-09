@@ -13,12 +13,10 @@ Propulsion depends on a handful of Symfony components (`symfony/console`, `symfo
 
 ## Installing via Composer
 
-:::caution
-Propulsion is not yet on Packagist. Install directly from the GitHub repository until the first tagged release.
-:::
+Propulsion is available on Packagist. The latest stable version is **v1.0.0**.
 
 ```bash
-composer require quioteframework/propulsion:dev-main
+composer require quioteframework/propulsion
 ```
 
 Or add it to your `composer.json` manually:
@@ -26,14 +24,8 @@ Or add it to your `composer.json` manually:
 ```json
 {
     "require": {
-        "quioteframework/propulsion": "dev-main"
-    },
-    "repositories": [
-        {
-            "type": "vcs",
-            "url": "https://github.com/quioteframework/propulsion"
-        }
-    ]
+        "quioteframework/propulsion": "^1.0.0"
+    }
 }
 ```
 

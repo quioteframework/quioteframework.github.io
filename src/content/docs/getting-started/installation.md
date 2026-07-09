@@ -26,31 +26,23 @@ Optional extensions that unlock additional functionality:
 
 ## Installing via Composer
 
-:::caution
-Quiote is not yet available on Packagist. Until the first stable release, install directly from the GitHub repository.
-:::
+Quiote is available on Packagist. The latest stable version is **v1.2.2**.
 
 Follow these steps from your project directory.
 
 1. **Require the package.** In an existing Composer project, one command adds Quiote and pulls in its dependencies:
 
    ```bash
-   composer require quioteframework/quiote:dev-main
+   composer require quioteframework/quiote
    ```
 
-2. **Or add it to `composer.json` by hand.** If you prefer to edit the manifest yourself, add both the requirement and the VCS repository (needed while Quiote is off Packagist), then run `composer install`:
+2. **Or add it to `composer.json` by hand.** If you prefer to edit the manifest yourself, add the requirement, then run `composer install`:
 
    ```json
    {
        "require": {
-           "quioteframework/quiote": "dev-main"
-       },
-       "repositories": [
-           {
-               "type": "vcs",
-               "url": "https://github.com/quioteframework/quiote"
-           }
-       ]
+           "quioteframework/quiote": "^1.2.2"
+       }
    }
    ```
 
@@ -60,7 +52,7 @@ Follow these steps from your project directory.
 
 ## Verifying the installation
 
-3. **Confirm the CLI runs.** Composer installs the `quiote` binary to `vendor/bin`. Ask it for its version — a version string (currently `2.0.0-dev`) means Quiote is installed and runnable:
+3. **Confirm the CLI runs.** Composer installs the `quiote` binary to `vendor/bin`. Ask it for its version — a version string (currently `1.2.2`) means Quiote is installed and runnable:
 
    ```bash
    vendor/bin/quiote --version

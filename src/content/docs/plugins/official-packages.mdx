@@ -9,15 +9,15 @@ A growing set of subsystems that once lived in the core — or that a batteries-
 
 All of these packages are **MIT-licensed** (the kernel itself is LGPL-2.1+); an MIT package depending on the LGPL kernel is a standard, sound arrangement.
 
-<Aside type="caution" title="Pre-alpha">
-Each package lives in its own `github.com/quioteframework/*` repository, but none is **published to Packagist** yet. Until then, install them by adding a VCS repository and requiring `dev-main` — see the [pre-alpha note in the overview](/plugins/overview/#enabling-a-package). The plain `composer require` lines below describe the eventual Packagist experience.
+<Aside type="note" title="Installing the packages">
+Each package lives in its own `github.com/quioteframework/*` repository and is published to Packagist. Install any one with `composer require quioteframework/<package>`.
 </Aside>
 
 ## How enabling works
 
 Almost every package follows the **same two steps**: install the code, then activate it.
 
-1. **Install** — `composer require quioteframework/<package>` (during pre-alpha, via the VCS repository above).
+1. **Install** — `composer require quioteframework/<package>`.
 2. **Enable** — add the package's `Plugin` class to your app's `Config/plugins.{php,yaml,yml,xml}`. Listing it there is what actually runs it: at boot, `PluginManager` reads that file and calls each plugin's `register()`, which wires the package into the framework's seams (config, DI, middleware, events, routes, commands). From then on the contribution is present on every request. See [Plugins overview: How a plugin reaches a request](/plugins/overview/#how-a-plugin-reaches-a-request).
 
 A `Plugin` class is only accepted from `plugins.*` because it already carries the mandatory `#[Quiote\Plugin\Attribute\Plugin]` attribute — a class-string named in config without that attribute is silently refused. All official packages carry it already; you only add it yourself when [writing your own plugin](/architecture/plugins/#writing-a-plugin).

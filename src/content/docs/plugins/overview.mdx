@@ -106,19 +106,14 @@ Every official package's plugin class already carries the required `#[Quiote\Plu
 
 One package is *not* opt-in: **`quioteframework/csrf`**. It's a required dependency of the kernel and registers itself automatically at boot, so every app is CSRF-protected out of the box without a `plugins` entry. It's a security default, not a packaging convenience — so you turn it *off* consciously (set `core.csrf.enabled => false`, which logs a warning), rather than turning it on. See [Official packages: csrf](/plugins/official-packages/#quioteframeworkcsrf).
 
-<Aside type="caution" title="Pre-alpha: installing the packages">
-The `quioteframework/*` packages now live in their own GitHub repositories, but — like the kernel itself — they are **not published to Packagist yet** (it's early days). Until they are, add each one you use as a VCS repository in your app's `composer.json` and require the `dev-main` branch:
+<Aside type="note" title="Installing the packages">
+The `quioteframework/*` packages live in their own GitHub repositories and are published to Packagist. Install each one you use with `composer require`:
 
 ```json
-"repositories": [
-  { "type": "vcs", "url": "https://github.com/quioteframework/db-doctrine" }
-],
 "require": {
-  "quioteframework/db-doctrine": "dev-main"
+  "quioteframework/db-doctrine": "^1.2.2"
 }
 ```
-
-The plain `composer require quioteframework/…` lines throughout these docs describe the eventual Packagist experience.
 </Aside>
 
 ## How a plugin reaches a request

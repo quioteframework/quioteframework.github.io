@@ -14,11 +14,7 @@ hero:
       variant: minimal
 ---
 
-import { CardGrid, Card, LinkCard, Aside } from '@astrojs/starlight/components';
-
-<Aside type="danger" title="Pre-alpha — here be dragons">
-**Propulsion is in a pre-alpha stage, and this documentation is incomplete and in flux.** APIs, conventions, and config surfaces described here can change without notice, some pages are still stubs or missing or carried over from Propel and not yet fully rewritten, and features may be documented ahead of — or behind — the code. Don't build anything you can't afford to rewrite. You've been warned.
-</Aside>
+import { CardGrid, Card, LinkCard } from '@astrojs/starlight/components';
 
 ## What is Propulsion?
 
@@ -41,10 +37,10 @@ Propulsion is an object-relational mapper (ORM) for PHP: you describe your datab
 
 ## Get started
 
-Propulsion isn't on Packagist yet — install it straight from GitHub:
+The latest stable version is **v1.0.0**. Install it from Packagist with Composer:
 
 ```bash
-composer require quioteframework/propulsion:dev-main
+composer require quioteframework/propulsion
 ```
 
 Write a schema, generate your models, and start querying:

@@ -9,8 +9,8 @@ The **Quiote Assistant MCP** is a [Model Context Protocol](https://modelcontextp
 
 It is, itself, **a Quiote application**. It dogfoods the framework's own [app-as-MCP-server capability](/advanced/mcp-server/) — the same `Quiote\Mcp\McpPlugin` any Quiote app can turn on — so the assistant is both a useful tool and the reference example of building an MCP server with Quiote.
 
-<Aside type="caution" title="Pre-alpha">
-The assistant's capability surface has grown quickly and its shape can still change. It has no independent version scheme yet (`mcp.server_version` is still `0.1.0` despite everything below). It isn't on Packagist — build it from a checkout, the PHAR, or the published Docker image (`ghcr.io/quioteframework/quiote-mcp-assistant`, tagged releases only).
+<Aside type="note" title="Version">
+The Quiote Assistant MCP is at **v1.0.0** (`mcp.server_version` reports `1.0.0`). It's published as a Docker image (`ghcr.io/quioteframework/quiote-mcp-assistant`, tagged releases), and can also be built from a checkout or run as the PHAR.
 </Aside>
 
 ## What it exposes
@@ -314,22 +314,25 @@ Omit `--target-app-dir` if you only want the knowledge tools. Once registered, t
 
 This is the part worth studying if you're building your own MCP server on Quiote — the assistant is deliberately a plain app with nothing special about it.
 
-**It's turned on by two settings.** `mcp.enabled = true`, plus both `Quiote\Mcp\McpPlugin` (which publishes the `mcp.*` settings and registers the `mcp:serve` transport) and the app's own `AssistantPlugin` listed in the `plugins` config key:
+**It's turned on by two settings.** `mcp.enabled = true`, plus both `Quiote\Mcp\McpPlugin` (which publishes the `mcp.*` settings and registers the `mcp:serve` transport) and the app's own `AssistantPlugin`, both listed in `Config/plugins.php`:
+
+```php
+// app/Config/plugins.php
+return [
+    ['class' => \Quiote\Mcp\McpPlugin::class, 'enabled' => true],
+    ['class' => \QuioteMcpAssistant\Mcp\AssistantPlugin::class, 'enabled' => true],
+];
+```
 
 ```php
 // app/Config/settings.php
-'plugins' => [
-    \Quiote\Mcp\McpPlugin::class,
-    \QuioteMcpAssistant\Mcp\AssistantPlugin::class,
-],
-
 'mcp.enabled'    => true,
 'mcp.transports' => ['stdio', 'http'],
 'mcp.server_name' => 'quiote-assistant',
 ```
 
-<Aside type="caution" title="Pinned to an older plugin mechanism">
-The assistant currently depends on a `quioteframework/quiote` commit from before `#[Plugin]`-attribute activation and the dedicated `Config/plugins.php` file existed (see [Plugins and extensibility](/architecture/plugins/#registering-a-plugin) for the current, documented mechanism) — it hasn't been updated to `composer update`'s latest `dev-main` yet. Treat the snippet above as "what this specific reference app does today," not as current best practice for your own plugins.
+<Aside type="note" title="Uses the current plugin mechanism">
+The assistant consumes `quioteframework/quiote` **v1.2.2** and registers its plugins through the dedicated `Config/plugins.php` file with `#[Plugin]`-attribute activation — the current, documented mechanism (see [Plugins and extensibility](/architecture/plugins/#registering-a-plugin)).
 </Aside>
 
 **Every capability is registered manually**, directly against `Quiote\Mcp\McpCatalog`. There's no attribute discovery for plain handler classes (only `#[Route]` actions carrying `#[McpTool]` are scanned) — and note that `PluginRegistrar::mcpTool()`/`mcpResource()`/`mcpPrompt()` convenience methods, which used to be the documented seam here, have since been **removed from the framework core**. `AssistantPlugin` reproduces that convenience itself with small private wrapper methods, `mcpResource()`/`mcpTool()`/`mcpPrompt()`, that forward to `McpCatalog::addResource()`/`addTool()`/`addPrompt()`:
