@@ -332,7 +332,7 @@ return [
 ```
 
 <Aside type="note" title="Uses the current plugin mechanism">
-The assistant consumes `quioteframework/quiote` **v1.2.2** and registers its plugins through the dedicated `Config/plugins.php` file with `#[Plugin]`-attribute activation — the current, documented mechanism (see [Plugins and extensibility](/architecture/plugins/#registering-a-plugin)).
+The assistant consumes `quioteframework/quiote` **v1.2** and registers its plugins through the dedicated `Config/plugins.php` file with `#[Plugin]`-attribute activation — the current, documented mechanism (see [Plugins and extensibility](/architecture/plugins/#registering-a-plugin)).
 </Aside>
 
 **Every capability is registered manually**, directly against `Quiote\Mcp\McpCatalog`. There's no attribute discovery for plain handler classes (only `#[Route]` actions carrying `#[McpTool]` are scanned) — and note that `PluginRegistrar::mcpTool()`/`mcpResource()`/`mcpPrompt()` convenience methods, which used to be the documented seam here, have since been **removed from the framework core**. `AssistantPlugin` reproduces that convenience itself with small private wrapper methods, `mcpResource()`/`mcpTool()`/`mcpPrompt()`, that forward to `McpCatalog::addResource()`/`addTool()`/`addPrompt()`:
