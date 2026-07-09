@@ -201,7 +201,9 @@ For the common case — a translator with no sub-domains of its own — key `par
 
 `SimpleTranslator::initialize()` auto-detects this **flat** shape: if every top-level key parses as a valid locale identifier, it's treated as if wrapped in a single `''`-keyed domain. This is the shape to reach for by default.
 
-The **domain-nested** shape (`domain => locale => key/translation`) is still there for translators that have real sub-domains, and it comes with a sharp edge worth knowing about even though you'll only need it for nesting: `TranslationManager` resolves a domain by progressively stripping trailing `.segment` parts until a registered translator matches, then passes whatever's *left over* — not the matched translator's own name — as the domain argument to `translate()`. A translator nested inside another (e.g. declared with domain `default.errors`) keys its own messages by the exact suffix left over after the parent is matched:
+The **domain-nested** shape (`domain => locale => key/translation`) is still there for translators that have real sub-domains. It comes with a sharp edge worth knowing about — though you'll only meet it when nesting.
+
+When resolving a domain, `TranslationManager` progressively strips trailing `.segment` parts until a registered translator matches, then passes whatever is *left over* — **not** the matched translator's own name — as the domain argument to `translate()`. So a translator nested inside another (say, declared with domain `default.errors`) keys its own messages by the exact suffix left over after the parent is matched:
 
 ```php
 'params' => [
@@ -209,7 +211,9 @@ The **domain-nested** shape (`domain => locale => key/translation`) is still the
 ],
 ```
 
+:::tip[Not nesting? Use the flat shape.]
 If you're not nesting translators, prefer the flat shape above — it sidesteps this leftover-suffix mechanic entirely. The domain-nested shape's degenerate, no-nesting case (keying by `''` instead of the translator's own declared domain name) still works, but the flat shape is the same thing spelled the way you'd actually guess it. See `SimpleTranslator::initialize()`'s docblock for the full mechanics if you're debugging a specific domain-resolution path.
+:::
 
 ### Formatters
 

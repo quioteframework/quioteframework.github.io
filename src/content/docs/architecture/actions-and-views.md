@@ -7,6 +7,19 @@ Quiote separates *deciding what to do* from *producing output*. An **action** ha
 
 This split is the same one Agavi used, and it is the reason a single action class can serve HTML, JSON, and XML without knowing anything about rendering.
 
+## How it fits in a request
+
+Actions and views are the last stops on the [request lifecycle](/architecture/request-lifecycle/). By the time control reaches them, routing has already matched the URL and negotiated the output type. `DispatchMiddleware` is the hand-off point:
+
+> `RoutingMiddleware` builds an `ActionDescriptor` → `DispatchMiddleware` calls `ActionExecutor::execute()` → the executor creates and initializes the **action**, runs the verb-matched `execute*()` method, and takes the returned view name → `ViewNameResolver` turns that name into a **view** class → the view's `execute<OutputType>()` method runs → the **renderer** writes the template output into the response body.
+
+Two classes do the finding and wiring:
+
+- **`Quiote\Execution\ActionExecutor`** creates the action (`Controller::createActionInstance()`), initializes it, picks and runs the right method, then resolves and runs the view.
+- **`Quiote\Execution\ActionResolver`** and **`Quiote\Execution\ViewNameResolver`** decide *which* method and *which* view class, using the rules described below.
+
+For the full picture — kernel, pipeline, and response emission — see [The request lifecycle](/architecture/request-lifecycle/) and [The middleware pipeline](/architecture/middleware-pipeline/).
+
 ## Actions
 
 An action extends `Quiote\Action\Action`. The base class defines **no** `execute*` methods — the framework calls them dynamically based on the request. What the base class gives you is a set of hooks:
@@ -47,7 +60,21 @@ The resolver (`Quiote\Execution\ActionResolver`) tries, in order:
 
 Most actions use the semantic methods: `executeRead` to display, `executeWrite` to create, `executeUpdate` to modify, `executeRemove` to delete. Reach for a verb-exact method only when you need to tell apart two verbs that share a semantic method — `PUT` and `PATCH`, for instance, both resolve to `executeUpdate`, so define `executePut` / `executePatch` if they must behave differently.
 
-The same tokens (`read` / `write` / `update` / `remove`) name the per-method validation hooks — see [Validation](/basics/validation/). The mapping is not fixed: you can override or extend it (remap a verb, or add a non-standard one like `LOCK`) with the `routing.http_method_map` setting — see [Customising the HTTP verb mapping](/basics/routing/#customising-the-http-verb-mapping).
+The same tokens (`read` / `write` / `update` / `remove`) name the per-method validation hooks — see [Validation](/basics/validation/).
+
+The mapping is not fixed: you can override or extend it — remap a verb, or add a non-standard one like `LOCK` — with the `routing.http_method_map` setting in your app's settings file:
+
+```php
+// Config/settings.php
+return [
+    'routing.http_method_map' => [
+        'PATCH' => 'write', // route PATCH to executeWrite() instead of executeUpdate()
+        'LOCK'  => 'lock',  // custom verb -> executeLock()
+    ],
+];
+```
+
+Keys are matched case-insensitively; each value is `ucfirst`-ed into the `execute<Token>()` method name, so a custom `lock` token needs a matching `executeLock()` on any action that should handle it. The same setting can be written in YAML or XML (in XML it needs a `prefix="routing."` on the `<settings>` wrapper) — see [Configuration](/architecture/configuration/) and [Customising the HTTP verb mapping](/basics/routing/#customising-the-http-verb-mapping).
 
 ```php
 <?php
@@ -134,12 +161,17 @@ A view sees the action's attributes plus any it sets itself. Those attributes be
 
 ## View name resolution
 
-Given an action in module `Blog` named `Post` that returns `'Success'`, Quiote resolves:
+Quiote builds the view class and template names by convention, from the action name plus the returned view name. Take an action in module `Blog` named `Post` that returns `'Success'`:
 
-- **View class**: `PostSuccessView` (action name + view name + `View`), in the module's `Views/` directory.
-- **Template**: `PostSuccess.php` (action name + view name), in the module's `Templates/` directory.
+| Piece | Convention | Resolved to | Location |
+|---|---|---|---|
+| Action | `<Name>Action` | `PostAction` | `Blog/Actions/` |
+| View class | `<Action><View>View` | `PostSuccessView` | `Blog/Views/` |
+| Template | `<Action><View>.php` | `PostSuccess.php` | `Blog/Templates/` |
 
-The `ViewNameResolver` handles this mapping. Keeping the names aligned — action, view, template — is what lets the convention stay implicit; deviate and you wire it explicitly.
+So the class name is action name + view name + `View`, and the template file is action name + view name. The `ViewNameResolver` performs this mapping (the class namespace uses the `core.namespace_prefix` setting, `App` by default — e.g. `App\Modules\Blog\Views\PostSuccessView`).
+
+Keeping the three names aligned — action, view, template — is what lets the convention stay implicit. Deviate from it and you have to wire the view up explicitly.
 
 ## The two-phase pattern
 

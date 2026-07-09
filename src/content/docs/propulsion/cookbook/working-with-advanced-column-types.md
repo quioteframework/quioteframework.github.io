@@ -7,7 +7,7 @@ Propulsion offers a set of advanced column types, implemented database-agnostica
 
 ## `blob` columns
 
-Propulsion stores *Binary Large Objects* (BLOBs) internally as PHP streams. This mirrors PDO's own convention of using streams when returning LOB columns in a result set and when binding values to prepared statements. Not every PDO driver actually supports streaming, so where a driver doesn't, Propulsion creates a `php://temp` stream to hold the LOB contents instead, giving you a consistent API regardless of driver.
+Propulsion stores *Binary Large Objects* (BLOBs) internally as PHP streams. This mirrors PDO's own convention of using streams when returning LOB columns in a result set and when binding values to prepared statements. If a PDO driver returns the raw string contents instead of a stream, Propulsion wraps it in a `php://memory` stream, giving you a consistent API regardless of driver.
 
 Note that CLOBs (*Character* Locator Objects) are treated as plain strings, since there's no equivalent PDO convention for treating them as streams.
 

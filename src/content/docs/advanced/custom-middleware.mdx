@@ -15,6 +15,17 @@ There are three ways to place it, and they can be mixed freely:
 
 All three are shown below.
 
+## How your middleware fits in a request
+
+Quiote builds the pipeline once — lazily, on the first request, then cached for the worker's lifetime. Your middleware becomes one link in that chain.
+
+- **How the framework finds and orders it.** Every framework middleware carries a `#[Middleware]` attribute; a scanner reads them and a topological resolver sorts them by `phase`, then `before`/`after` constraints, then `priority`. Your middleware joins that same ordering pass when you use the `#[Middleware]` attribute + `registerAttributed()`, or via a declarative `middleware.*` config entry. `register()` is different: it is spliced into the already-built stack at the position you name (defaulting to just after `ValidationMiddleware`).
+- **The path a request takes.** Each middleware wraps the next, so a request travels inward and the response travels back out:
+
+> Kernel boots and builds the pipeline → request enters `ErrorHandlingMiddleware` (outermost) → `SessionMiddleware` → … → `RoutingMiddleware` resolves the action → `SecurityMiddleware` checks access → `ValidationMiddleware` validates input → **your middleware** (default position) → `DispatchMiddleware` runs the action and renders the view → the response unwinds back out through every layer → it is emitted.
+
+Where you place your middleware decides both *what it can see on the way in* (a route-aware check needs to run after `RoutingMiddleware`) and *what it can touch on the way out* (see the [`ErrorHandlingMiddleware` caution](#errorhandlingmiddleware-before-and-after-are-not-symmetric) below). The full ordering is in [Built-in anchor points](#built-in-anchor-points); for the complete lifecycle see [The request lifecycle](/architecture/request-lifecycle/) and [The middleware pipeline](/architecture/middleware-pipeline/).
+
 ## Write a PSR-15 middleware
 
 Your middleware implements `Psr\Http\Server\MiddlewareInterface` — nothing Quiote-specific:
@@ -104,7 +115,7 @@ public static function register(
 
 - **`$factory`** is called once, when the pipeline is first built. It returns the middleware instance — keep construction lazy so it does not run at registration time.
 - **`$after` / `$before`** position your middleware relative to a built-in (see the anchor list below) *or* another registered middleware.
-- If you give neither, the middleware is inserted **just before `SecurityMiddleware`** — a safe default: after routing and negotiation, before auth.
+- If you give neither, the middleware is inserted **just after `ValidationMiddleware`** — a safe default: the route is resolved, access is checked, and input is validated, but the action has not run yet.
 
 ```php
 use App\Middleware\HealthzMiddleware;
@@ -158,6 +169,7 @@ Use any of these FQCNs (in `Quiote\Middleware\`) as a `before:` / `after:` targe
 
 ```
 ErrorHandlingMiddleware       (outermost — catches everything)
+TelemetryMiddleware
 SessionMiddleware
 TimingMiddleware
 TraceMiddleware
@@ -191,10 +203,10 @@ A middleware that adds a response header to *every* response, registered with `a
 
 ## Ordering rules and caveats
 
-- **Register order matters for chains.** If middleware B is positioned `after: A` and A is itself a *registered* middleware, register A first — otherwise A is not in the stack yet when B looks for it, and B falls back to "before `SecurityMiddleware`". Use `priority` to make intent explicit rather than relying on registration order.
+- **Register order matters for chains.** If middleware B is positioned `after: A` and A is itself a *registered* middleware, register A first — otherwise A is not in the stack yet when B looks for it, and B falls back to "after `ValidationMiddleware`". Use `priority` to make intent explicit rather than relying on registration order.
 - **Register once.** Registrations are process-global static state, keyed by FQCN. Registering the same class twice overwrites the earlier entry.
-- **A missing target falls back.** If the named `before:` / `after:` target is not found, the safe default (before `SecurityMiddleware`) applies.
-- **Enable/disable.** Any middleware — framework or attributed — can be toggled off via `<middleware_config>` (see [The middleware pipeline](/architecture/middleware-pipeline/#enabling-and-disabling-middlewares)); a config entry overrides the attribute's `enabled` default. (`register()`-ed middleware is skipped when its FQCN is disabled the same way.)
+- **A missing target falls back.** If the named `before:` / `after:` target is not found, the safe default (after `ValidationMiddleware`) applies.
+- **Enable/disable.** Any middleware — framework or attributed — can be toggled off with a `<use class="…" enabled="false" />` entry (or `enabled: false` in PHP/YAML) in a `middleware.{xml,php,yaml}` config file (see [The middleware pipeline](/architecture/middleware-pipeline/#enabling-and-disabling-middlewares)); that entry overrides the attribute's `enabled` default. (`register()`-ed middleware is skipped when its FQCN is disabled the same way.)
 
 ## Verify the position
 
@@ -251,19 +263,19 @@ Unlike `register()`, there is no factory: an attributed middleware is built thro
     priority: 0,                 // higher runs earlier within the band
     before:   null,              // run before this middleware (short name or FQCN)
     after:    null,              // run after this middleware (short name or FQCN)
-    enabled:  true,              // default on; overridable via <middleware_config>
+    enabled:  true,              // default on; overridable via a middleware.* <use enabled> entry
 )]
 ```
 
 - **`phase`** is the primary sort key — one of, in order: `bootstrap`, `pre_routing`, `pre`, `routing`, `before_action`, `action`, `after_action`, `finalize`. It groups middleware into the same coarse bands the pipeline has always used.
 - **`before` / `after`** are hard ordering constraints (a topological sort). They may name a short class name (`'RoutingMiddleware'`) or a fully-qualified name. A cycle is a build error; an unresolved or ambiguous name logs a diagnostic and the constraint is dropped.
 - **`priority`** (higher first) plus scan order break remaining ties within a band.
-- **`enabled`** is the default on/off state; a `<middleware_config>` entry overrides it (see [The middleware pipeline](/architecture/middleware-pipeline/#enabling-and-disabling-middlewares)).
+- **`enabled`** is the default on/off state; a `middleware.*` `<use class="…" enabled="false" />` entry overrides it (see [The middleware pipeline](/architecture/middleware-pipeline/#enabling-and-disabling-middlewares)).
 
 ### register() vs registerAttributed()
 
 - **`registerAttributed()`** joins the unified attribute ordering — it is sorted together with the framework middleware by phase/`before`/`after`/`priority`, and DI-resolved.
-- **`register()`** is spliced in *after* that ordered stack is built, at the position its `before`/`after`/`priority` name (falling back to before `SecurityMiddleware`).
+- **`register()`** is spliced in *after* that ordered stack is built, at the position its `before`/`after`/`priority` name (falling back to after `ValidationMiddleware`).
 - If the same class is passed to **both**, `register()` wins outright — the attributed candidate is ignored and a warning is logged.
 
 Either way, confirm placement with `debugStack()` (above) rather than reasoning about it.

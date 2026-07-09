@@ -52,7 +52,7 @@ php bin/propulsion reverse --dsn="mysql:host=localhost;dbname=mydb" --database=m
 | `--add-validators` | Comma-separated list of validators to add to generated columns: `none`, `maxlength`, `maxvalue`, `type`, `required`, `unique`, `all`. | `none` |
 | `--config`, `-c` | A `build.php`/`build.properties` file overriding `generator/default.php` (repeatable; later files win). | `[]` |
 
-If your database includes tables you don't want reflected in the schema (third-party tables, framework-internal tables, and so on), exclude them via `exclude_tables` in your [configuration file](/propulsion/reference/configuration-file/#exclude-tables) before running `schema:reverse`.
+`schema:reverse` has no built-in option to exclude tables from the generated schema. If your database includes tables you don't want reflected in it (third-party tables, framework-internal tables, and so on), remove the corresponding `<table>` elements from the generated `schema.xml` by hand before using it to build models.
 
 #### Limitations
 

@@ -96,7 +96,19 @@ $post = $this->getContext()->getModel('Post', 'Blog');
 | `getModel('Clock')` | `App\Models\ClockModel` |
 | `getModel(\App\Domain\Money::class)` | that class as-is (FQCN passthrough) |
 
-A module model lives in the module's `Models/` directory; a global model lives in the app-level `Models/` directory (`core.model_dir`). If you pass a fully-qualified class name, it is used directly.
+A module model lives in the module's `Models/` directory; a global model lives in the app-level `Models/` directory. If you pass a fully-qualified class name, it is used directly.
+
+The `App\` prefix in those class names is your app's `core.namespace_prefix`, and the global `Models/` directory is `core.model_dir` — both are `settings`:
+
+```php
+// Config/settings.php
+return [
+    'core.namespace_prefix' => 'App',
+    'core.model_dir'        => '/srv/app/Models',
+];
+```
+
+The same settings can be written in YAML or XML — see [Configuration](/architecture/configuration/#settings).
 
 The `$parameters` argument, when given, is passed both to the constructor and — if the class defines one — to an `initialize($context, $parameters)` method.
 

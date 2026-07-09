@@ -409,7 +409,7 @@ $articles = ArticleQuery::create()
   ->join('Category')
   ->select(array('Id', 'Title', 'Content', 'Category.Name'))
   ->find();
-// returns Propulsion\Collection\ArrayCollection(
+// returns Propulsion\Collection\PropulsionArrayCollection(
 //   array('Id' => 123, 'Title' => 'foo', 'Content' => 'This is foo', 'Category.Name' => 'Miscellaneous'),
 //   array('Id' => 456, 'Title' => 'bar', 'Content' => 'This is bar', 'Category.Name' => 'Main')
 // )
@@ -443,7 +443,7 @@ $nbComments = ArticleQuery::create()
   ->groupBy('Article.Title')
   ->select(array('Article.Title', 'nbComments'))
   ->find();
-// returns Propulsion\Collection\ArrayCollection(
+// returns Propulsion\Collection\PropulsionArrayCollection(
 //   array('Article.Title' => 'foo', 'nbComments' => 25),
 //   array('Article.Title' => 'bar', 'nbComments' => 32)
 // )
@@ -452,7 +452,7 @@ $nbComments = ArticleQuery::create()
 $articles = ArticleQuery::create()
   ->select('*')
   ->find();
-// returns Propulsion\Collection\ArrayCollection(
+// returns Propulsion\Collection\PropulsionArrayCollection(
 //   array('Id' => 123, 'Title' => 'foo', 'Content' => 'This is foo'),
 //   array('Id' => 456, 'Title' => 'bar', 'Content' => 'This is bar')
 // )
@@ -560,10 +560,6 @@ $books = BookQuery::create()
 // You can even use SQL functions inside conditions
 $books = BookQuery::create()
   ->where('UPPER(Book.Title) = ?', 'WAR AND PEACE')
-  ->find();
-// When needed, you can specify the binding type as third parameter
-$books = BookQuery::create()
-  ->where("POSITION('War' IN Book.Title) > 0", true, PDO::PARAM_BOOL)
   ->find();
 ```
 
@@ -999,16 +995,13 @@ distinct()
 limit($limit)
 offset($offset)
 where($clause, $value)
-where($clause, $value, $bindingType = PDO::PARAM_STR)
 where($conditions, $operator)
 _or()
 filterBy($column, $value, $comparison)
 filterByArray($conditions)
 condition($name, $clause, $value)
-condition($name, $clause, $value, $bindingType = PDO::PARAM_STR)
 combine($conditions, $operator = 'and', $name)
 having($clause, $value)
-having($clause, $value, $bindingType = PDO::PARAM_STR)
 having($conditions, $operator)
 orderBy($columnName, $order = 'asc')
 groupBy($columnName)
@@ -1018,7 +1011,7 @@ withQuery($relation, callable $callback, $secondaryCriteriaClass = null) // pref
 useQuery($relation, $secondaryCriteriaClass = null)                      // still supported
 withColumn($clause, $alias)
 prune($object)
-comment($comment)
+setComment($comment)
 
 // termination methods (return model objects)
 count($con = null)
@@ -1041,7 +1034,7 @@ update($values, $con = null, $forceIndividualSaves = false)
 
 ```php
 <?php
-// find() returns a Propulsion\Collection\ObjectCollection, which you can use just like an array
+// find() returns a Propulsion\Collection\PropulsionObjectCollection, which you can use just like an array
 $books = BookQuery::create()->find(); // $books behaves like an array
 ?>
 There are <?= count($books) ?> books:
@@ -1076,7 +1069,7 @@ There are <?= $books->count() ?> books:
 <?php endif; ?>
 ```
 
-Here is the list of methods you can call on a `Propulsion\Collection\ObjectCollection`:
+Here is the list of methods you can call on a `Propulsion\Collection\PropulsionObjectCollection`:
 
 ```php
 <?php
@@ -1132,9 +1125,9 @@ All `Collection` classes implement `\ArrayAccess`, `\IteratorAggregate`, `\Count
 
 ### Using an alternative collection class
 
-Sometimes it's useful to have a custom collection class as result instead of the normal `*Collection` object. Usually the formatter defines which collection will be returned, but Propulsion gives you a nitty-gritty trick to overwrite that behavior.
+Sometimes it's useful to have a custom collection class as result instead of the normal `*Collection` object. The formatter defines which collection class it instantiates — each formatter (`PropulsionObjectFormatter`, `PropulsionArrayFormatter`, etc.) holds a protected `$collectionName` property pointing at the collection class it hydrates into.
 
-Let's assume you have a table `author` with its model class `Bookstore\Author` and thus a query class `Bookstore\AuthorQuery`: when you have the normal `ObjectFormatter` chosen and call `->find()` on the query class object, the formatter searches for a class called `$ModelClass . 'Collection'` — i.e. `Bookstore\AuthorCollection` — and if found uses this class instead of `Propulsion\Collection\ObjectCollection`. You should primarily just extend `Propulsion\Collection\ObjectCollection` and add your own methods, or overwrite particular ones.
+Propulsion does not look up a collection class by convention from the model name (there's no `Bookstore\AuthorCollection`-style auto-discovery). To use a custom collection class, extend `Propulsion\Collection\PropulsionObjectCollection` (or `PropulsionArrayCollection`) with your own methods, then subclass the relevant formatter and override its `$collectionName` property to point at your class, and select that formatter with `setFormatter()`.
 
 ### Paginating results
 
@@ -1174,12 +1167,12 @@ There are <?= $bookPager->count() ?> books:
 
 ### Using an alternative formatter
 
-By default, `find()` calls return a `Propulsion\Collection\ObjectCollection` of model objects. For performance reasons, you may want to get a collection of arrays instead. Use `setFormatter()` to specify a custom result formatter.
+By default, `find()` calls return a `Propulsion\Collection\PropulsionObjectCollection` of model objects. For performance reasons, you may want to get a collection of arrays instead. Use `setFormatter()` to specify a custom result formatter.
 
 ```php
 <?php
 $book = BookQuery::create()
-  ->setFormatter('Propulsion\Formatter\ArrayFormatter')
+  ->setFormatter('Propulsion\Formatter\PropulsionArrayFormatter')
   ->findOne();
 print_r($book);
   => array('Id' => 123, 'Title' => 'War And Peace', 'ISBN' => '3245234535', 'AuthorId' => 456, 'PublisherId' => 567)
@@ -1190,7 +1183,7 @@ Of course, the formatters take the calls to `with()` into account, so you can en
 ```php
 <?php
 $book = BookQuery::create()
-  ->setFormatter('Propulsion\Formatter\ArrayFormatter')
+  ->setFormatter('Propulsion\Formatter\PropulsionArrayFormatter')
   ->with('Book.Author')
   ->with('Book.Publisher')
   ->findOne();
@@ -1215,11 +1208,11 @@ print_r($book);
 
 Propulsion provides five formatters:
 
-* `Propulsion\Formatter\ObjectFormatter`: The default formatter, returning a model object for `findOne()`, and an `ObjectCollection` of model objects for `find()`
-* `Propulsion\Formatter\OnDemandFormatter`: To save memory for large resultsets, prefer this formatter; it hydrates rows one by one as they are iterated on, and doesn't create a new model object at each row. Note that this formatter doesn't use the Instance Pool.
-* `Propulsion\Formatter\ArrayFormatter`: The array formatter, returning an associative array for `findOne()`, and an `ArrayCollection` of arrays for `find()`
-* `Propulsion\Formatter\SimpleArrayFormatter`: An array formatter for `select()` queries, returning a string, an associative array for `findOne()`, or an `ArrayCollection` of arrays for `find()`
-* `Propulsion\Formatter\StatementFormatter`: The "raw" formatter, returning a `PDOStatement` in any case.
+* `Propulsion\Formatter\PropulsionObjectFormatter`: The default formatter, returning a model object for `findOne()`, and an `ObjectCollection` of model objects for `find()`
+* `Propulsion\Formatter\PropulsionOnDemandFormatter`: To save memory for large resultsets, prefer this formatter; it hydrates rows one by one as they are iterated on, and doesn't create a new model object at each row. Note that this formatter doesn't use the Instance Pool.
+* `Propulsion\Formatter\PropulsionArrayFormatter`: The array formatter, returning an associative array for `findOne()`, and an `ArrayCollection` of arrays for `find()`
+* `Propulsion\Formatter\PropulsionSimpleArrayFormatter`: An array formatter for `select()` queries, returning a string, an associative array for `findOne()`, or an `ArrayCollection` of arrays for `find()`
+* `Propulsion\Formatter\PropulsionStatementFormatter`: The "raw" formatter, returning a `PDOStatement` in any case.
 
 You can easily write your own formatter to format the results the way you want. A formatter is basically a subclass of `PropulsionFormatter` providing a `format()` and a `formatOne()` method expecting a PDO statement.
 

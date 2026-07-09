@@ -9,6 +9,17 @@ A **renderer** turns a template into an output string. The kernel ships one — 
 
 Renderers are chosen per [output type](/basics/output-types-and-content-negotiation/) through a plain config registry — **there is no renderer plugin class**. Writing one is two steps: implement the contract, then name your class in `output_types.xml`.
 
+## How a renderer fits in a request
+
+A renderer is the last link in producing the response body. It is never called directly by your code — the view layer calls it once it has data to render.
+
+- **How it's found and selected.** Renderers aren't discovered by scanning; they're looked up by name from the `output_types` config. When a view needs to render a [layer](/basics/templates-and-rendering/#layouts-and-layers), `Quiote\Controller\OutputType::getRenderer($name)` reads the `renderers` registry for the current output type, instantiates the class you named (`new $class()`), and calls `initialize()` on it. A layer can name a specific renderer; otherwise the output type's `default_renderer` is used.
+- **The path a request takes.**
+
+> `RoutingMiddleware` resolves the action → … → `DispatchMiddleware` runs the action via `ActionExecutor` → the action returns a view name → the view resolves its layers → for each layer, `OutputType::getRenderer()` selects your renderer → the layer calls `renderer->render($layer, $attributes, $slots, $moreAssigns)` → the returned **string** becomes the response body.
+
+Because `render()` returns a string rather than writing to output, one output type can mix engines and the same renderer instance can be safely reused across requests under worker mode (see [reuse](#worker-mode-reuse-ireusablerenderer-and-reset) below). For the full picture see [The request lifecycle](/architecture/request-lifecycle/) and [The middleware pipeline](/architecture/middleware-pipeline/).
+
 ## The contract
 
 A renderer extends the abstract `Quiote\Renderer\Renderer` (which lives in the kernel and is never extracted). Only `render()` is abstract; everything else has a working default:

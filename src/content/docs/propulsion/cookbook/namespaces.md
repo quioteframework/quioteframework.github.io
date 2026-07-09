@@ -101,7 +101,7 @@ To avoid the repetition, set the generator's `autoPackage` setting to `true` in 
 <?php
 // build.php
 return [
-    'propulsion.generator.schema.autoPackage' => true,
+    'propulsion.namespace.autoPackage' => true,
 ];
 ```
 

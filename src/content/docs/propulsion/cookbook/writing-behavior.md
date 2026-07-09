@@ -134,11 +134,13 @@ The previous version relied on an external method updating `total_nb_votes` by h
 ```php
 <?php
 
+use Propulsion\Generator\Builder\OM\ObjectBuilder;
+
 class AggregateColumnBehavior extends \Propulsion\Generator\Model\Behavior
 {
     // ...
 
-    public function objectMethods(): string
+    public function objectMethods(ObjectBuilder $builder): string
     {
         return $this->addUpdateAggregateColumn();
     }

@@ -36,7 +36,7 @@ Rebuild your model, run the table creation SQL again, and you're ready to go. Th
   <column name="id" required="true" primaryKey="true" type="integer" />
   <column name="email" type="varchar" />
   <column name="telephone" type="varchar" />
-  <foreign-key foreignTable="account" onDelete="setnull" onUpdate="cascade">
+  <foreign-key foreignTable="account" onDelete="cascade">
     <reference local="id" foreign="id" />
   </foreign-key>
 </table>

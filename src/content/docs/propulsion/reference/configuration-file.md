@@ -260,11 +260,11 @@ Only `propulsion.database` (`mysql` → `pgsql`) changes default value versus Pr
 Separate from the generator's own build **properties**, some build-time tasks need a live database connection — reverse-engineering an existing schema (`schema:reverse`), diffing against a live database (`sql:diff`), or executing generated SQL (`sql:exec`). `GeneratorConfig::getBuildConnections()` resolves this, checked in order:
 
 1. **`propulsion.buildtimeConfigArray`** build property — a plain PHP array already in the target shape (see below). The recommended path for new configs.
-2. **`propulsion.buildtimeConfFile`** build property naming a file, tried at a `projectDir`-relative path, the given path directly, and a couple of legacy `build/propel/`-style fallback locations. Dispatched by extension:
+2. **`propulsion.buildtimeConf`** — a base64-encoded XML string, for passing build-time connection info on a command line without whitespace issues. Checked before `buildtimeConfFile` below — if both are set, `buildtimeConf` wins and the file is never consulted.
+3. **`propulsion.buildtimeConfFile`** build property naming a file, tried at a `projectDir`-relative path, the given path directly, and a couple of legacy `build/propel/`-style fallback locations. Dispatched by extension:
    - a `.php` file `require`d and expected to return the same shape as `buildtimeConfigArray`.
    - a legacy `buildtime-conf.xml` file (kept for backward compatibility).
-3. **`propulsion.buildtimeConf`** — a base64-encoded XML string, for passing build-time connection info on a command line without whitespace issues.
-4. If none of the above resolve a connection for the requested datasource name, falls back to the single connection assembled from `propulsion.database.url`/`.driver`/`.user`/`.password` (see [Database settings](#database-settings)).
+4. If none of the above resolve a connection for the requested datasource name, falls back to the single connection assembled from `propulsion.database.adapter`/`propulsion.database.url`/`.user`/`.password` (see [Database settings](#database-settings); `database.adapter` isn't itself a documented default property).
 
 The plain-PHP array shape:
 

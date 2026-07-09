@@ -3,7 +3,9 @@ title: The request lifecycle
 description: How a request travels from the kernel through the middleware pipeline to a rendered response.
 ---
 
-Every HTTP request in Quiote follows the same path: the kernel builds a PSR-7 request, hands it to the context, the context runs it through a PSR-15 middleware pipeline, and one of those middlewares dispatches an action and renders a view. This page traces that path and names the real classes at each step.
+This is the map of how Quiote turns an incoming HTTP request into a response — the single narrative that the rest of the architecture docs branch off from. Every request follows the same path: the kernel builds a PSR-7 request, hands it to the context, the context runs it through a PSR-15 middleware pipeline, and one of those middlewares dispatches an action and renders a view. Because the path is always the same, you can reason about any request by knowing these steps once.
+
+This page traces that path end to end and names the real classes at each step. If you only read one architecture page, read this one; the others (middleware, actions and views, routing, security) zoom in on a stage described here.
 
 ## The big picture
 

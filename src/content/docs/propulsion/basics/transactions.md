@@ -11,7 +11,7 @@ If the [ACID](https://en.wikipedia.org/wiki/ACID) acronym doesn't ring a bell, i
 
 ## Wrapping queries in a transaction
 
-Propulsion connections are `PropulsionPDO` instances, so transactions use [PDO's built-in transaction support](https://www.php.net/manual/en/pdo.transactions.php) verbatim — `beginTransaction()`, `commit()`, and `rollback()`:
+Propulsion connections are `PropulsionPDO` instances, so transactions use [PDO's built-in transaction support](https://www.php.net/manual/en/pdo.transactions.php) verbatim — `beginTransaction()`, `commit()`, and `rollBack()`:
 
 ```php
 <?php
@@ -35,7 +35,7 @@ public function transferMoney($fromAccountNumber, $toAccountNumber, $amount)
 
         $con->commit();
     } catch (\Exception $e) {
-        $con->rollback();
+        $con->rollBack();
         throw $e;
     }
 }
@@ -55,7 +55,7 @@ A connection object is always available through `Propulsion::getReadConnection([
 <?php
 class Book extends BaseBook
 {
-    public function postSave(ConnectionInterface $con): void
+    public function postSave(?PropulsionPDO $con = null): void
     {
         $author = $this->getAuthor();
         $author->setNbBooks($author->countBooks($con));
@@ -68,11 +68,11 @@ If anything in `postSave()` throws, the book's own insert/update rolls back too 
 
 ## Nested transactions
 
-PDO itself has no concept of nested transactions, but Propulsion emulates them across every supported database: calling `beginTransaction()`/`commit()`/`rollback()` while an outer transaction is already open is a no-op as far as the database is concerned — only the outermost pair actually starts/ends a real database transaction.
+PDO itself has no concept of nested transactions, but Propulsion emulates them across every supported database: calling `beginTransaction()`/`commit()`/`rollBack()` while an outer transaction is already open is a no-op as far as the database is concerned — only the outermost pair actually starts/ends a real database transaction.
 
 ```php
 <?php
-function deleteBooksWithNoPrice(ConnectionInterface $con): void
+function deleteBooksWithNoPrice(PropulsionPDO $con): void
 {
     $con->beginTransaction();
     try {
@@ -81,19 +81,19 @@ function deleteBooksWithNoPrice(ConnectionInterface $con): void
         \Map\BookTableMap::doDelete($c, $con);
         $con->commit();
     } catch (\Exception $e) {
-        $con->rollback();
+        $con->rollBack();
         throw $e;
     }
 }
 
-function cleanup(ConnectionInterface $con): void
+function cleanup(PropulsionPDO $con): void
 {
     $con->beginTransaction();
     try {
         deleteBooksWithNoPrice($con); // nested: no real commit here
         $con->commit();               // this one actually commits
     } catch (\Exception $e) {
-        $con->rollback();
+        $con->rollBack();
         throw $e;
     }
 }

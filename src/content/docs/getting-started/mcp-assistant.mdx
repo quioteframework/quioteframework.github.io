@@ -62,7 +62,7 @@ Five tools work with no target app at all; they answer questions about the frame
 </TabItem>
 <TabItem label="get_recipe">
 
-`get_recipe(task)` — step-by-step instructions **with runnable code** for a concrete task, rather than a convention summary. `task` is an enum: `read-only-action`, `multi-output-view`, `form-action`, `add-plugin`, `add-database-connection`, `expose-action-as-tool`, `register-mcp-tool`.
+`get_recipe(task)` — step-by-step instructions **with runnable code** for a concrete task, rather than a convention summary. `task` is an enum: `new-project`, `read-only-action`, `multi-output-view`, `form-action`, `add-plugin`, `add-database-connection`, `throttle-login`, `expose-action-as-tool`, `register-mcp-tool`.
 
 ```jsonc
 // get_recipe({ "task": "add-plugin" })
@@ -126,19 +126,22 @@ Both `describe_symbol` and `list_api` are backed by real `ReflectionClass`/`Refl
 
 ### Project-aware tools — when launched against a real app
 
-Launch the assistant with `--target-app-dir=/path/to/your/app` and twelve more tools appear, letting the agent inspect and extend *that* app rather than just answer questions about the framework in the abstract.
+Launch the assistant with `--target-app-dir=/path/to/your/app` and fifteen more tools appear, letting the agent inspect and extend *that* app rather than just answer questions about the framework in the abstract.
 
 **Read-only introspection:**
 
 | Tool | Returns |
 |---|---|
-| `project_info` | Basic app identity — name, namespace prefix, environment. |
-| `list_routes` | The app's declared routes. |
-| `describe_action` | Details of one action — verbs, validators, view. |
-| `list_db_connections` | Configured `databases` connections and their adapter. |
-| `list_plugins` | Plugins registered in `Config/settings.php`. |
+| `project_info` | Basic app identity — environment, default context, enabled plugins, and module list, read live from the bootstrapped app. |
+| `overview` | Routes, modules, Action/View/Template triads, diagnostics, and shadowed-config info, all from one app bootstrap — prefer it over calling the individual tools separately. |
+| `diagnostics` | Every problem the app can find in one call — routing (missing action class, duplicate route name/path), triad (missing view/template), and config errors — as one flat list sharing a `{severity, code, message, file, line, …}` shape. |
+| `list_routes` | Every route the app actually resolves with, read live from its `RouteCollection` (optionally filtered by `module`/`action`). |
+| `describe_action` | Details of one action — verbs, validator-derived input schema per verb, required credentials, default view. |
+| `list_db_connections` | Configured `databases` connections — adapter class and parameter names only, never credential values. |
+| `list_plugins` | Plugins actually registered during the app's bootstrap. |
 | `list_modules` | Modules under the app's module directories. |
 | `read_config` | A single, **allowlisted** settings key (secrets like `mcp.auth_token` are refused, with the allowlist returned instead). |
+| `validate_config` | Validation of the app's config files — syntax (per-format, with line numbers), semantic, and array-shape schema checks, format-agnostic across PHP/YAML/XML (omit `key` to validate every known config type). |
 
 **Scaffolding (write) tools** — `scaffold_module`, `scaffold_action`, `scaffold_plugin`, `scaffold_db_connection` generate real files in the target app; `run_console` invokes a `bin/quiote` console command. All default to **`dry_run: true`** and never overwrite an existing file — the agent (or you) has to explicitly opt into writing.
 
@@ -198,12 +201,13 @@ The server is a standalone Quiote app (PHP 8.5+), built on the [PHP MCP SDK](htt
 The assistant can also serve **Streamable HTTP** instead of (or alongside) stdio, useful for a shared/remote deployment rather than one subprocess per client.
 
 - **Sessions** — `Mcp-Session-Id` is issued on the first call and must be repeated on every subsequent one. Sessions live in PHP **process memory**, so a plain `php -S` / classic PHP-FPM deployment (a fresh process per request) won't retain them — run it under a persistent-worker runtime such as FrankenPHP worker mode.
-- **Bearer auth, safe by default** — set `mcp.auth_token`, typically from an environment variable:
+- **Bearer auth, safe by default** — set `mcp.auth_token` in the app's settings, typically from an environment variable:
   ```php
-  // Config/settings.php
+  // app/Config/settings.php
   'mcp.auth_token' => getenv('QUIOTE_ASSISTANT_MCP_TOKEN') ?: null,
   ```
-  With no token configured, `Quiote\Mcp\Auth\StaticTokenAuthenticator` **rejects every HTTP request** — there's no accidental "wide open" default. For a trusted network or a reverse proxy that already authenticates, `mcp.auth = 'none'` is the explicit escape hatch.
+  Like any setting, this key can also live in `app/Config/settings.yaml` or `app/Config/settings.xml` (see [Configuration](/architecture/configuration/)); the `getenv()` read shown here is a PHP idiom the other formats don't offer.
+  With no token configured, `Quiote\Mcp\Auth\StaticTokenAuthenticator` **rejects every HTTP request** — there's no accidental "wide open" default. For a trusted network or a reverse proxy that already authenticates, `mcp.auth = 'none'` is the explicit opt-out — a deliberate, last-resort override. The bearer check runs in `McpAuthMiddleware` ahead of the endpoint itself; see [how an MCP HTTP request is handled](/advanced/mcp-server/#how-an-mcp-http-request-is-handled) for the exact pipeline order.
 
 Example run:
 
@@ -217,7 +221,7 @@ QUIOTE_ASSISTANT_MCP_TOKEN=$(openssl rand -hex 32) php -S 0.0.0.0:8080 app/pub/i
 
 ### Docker
 
-A `Dockerfile` (PHP 8.5-cli-alpine, `intl`/`xsl`/`pdo_sqlite` extensions, `--no-dev` composer install) packages the assistant as an image, published to `ghcr.io/quioteframework/quiote-mcp-assistant` on tagged releases (`:latest` and `:vX.Y.Z`). It ships only `pdo_sqlite` — none of the project-aware tools open a real database connection, so `pdo_mysql`/`pdo_pgsql` aren't needed in the image.
+A `Dockerfile` (PHP 8.5-cli-alpine, `docker-php-ext-install`ing `intl` and `xsl` — `pdo_sqlite` and the rest of the base extensions ship preinstalled in the base image, not installed here — `--no-dev` composer install) packages the assistant as an image, published to `ghcr.io/quioteframework/quiote-mcp-assistant` on tagged releases (`:latest` and `:vX.Y.Z`). It deliberately adds no `pdo_mysql`/`pdo_pgsql` — none of the project-aware tools open a real database connection, so no extra DB driver is needed in the image.
 
 ```bash
 docker build -t quiote-assistant .

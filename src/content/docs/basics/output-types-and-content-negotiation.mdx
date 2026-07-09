@@ -9,6 +9,18 @@ An **output type** is a named rendering profile — `html`, `json`, `xml`, and s
 
 This is how one action and one view serve a browser HTML and an API client JSON, without either the action or the framework special-casing the caller.
 
+## How output types fit in a request
+
+Two [pipeline](/architecture/middleware-pipeline/) stages decide the output type, and the dispatch stage acts on it:
+
+1. **`ContentNegotiationMiddleware`** runs *before* routing. It reads the request's `Accept` header, compares it against the MIME types the app declares, and records the chosen output type on the request.
+2. **`OutputTypeSyncMiddleware`** runs *after* routing, so a matched route can override the negotiated type by fixing `_output_type` (or `#[Route(outputType: ...)]`).
+3. When `DispatchMiddleware` runs the action, `ActionExecutor` resolves the view and calls the view method for the current output type — `selectViewMethod()` picks `execute<OutputType>()` (e.g. `executeHtml`, `executeJson`) if it exists, and falls back to `execute()` otherwise.
+
+> `ContentNegotiationMiddleware` picks the output type → `RoutingMiddleware` resolves the action → `OutputTypeSyncMiddleware` reconciles a route-fixed type → `DispatchMiddleware` runs the action and calls the view's `execute<OutputType>()` → the output type's configured `Content-Type` and headers are applied to the response.
+
+See [The request lifecycle](/architecture/request-lifecycle/) for the full path.
+
 ## Declaring output types
 
 Output types are declared in the `output_types` config. A minimal HTML type — only `renderers` and `default_renderer` are load-bearing; everything else defaults sensibly:

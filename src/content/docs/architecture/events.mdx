@@ -9,6 +9,14 @@ Middleware covers the *request pipeline*. Events cover everything that isn't pip
 
 Like [logging](/architecture/logging/) and [telemetry](/architecture/telemetry/), the event registry is a process-global, worker-lifetime facade — you register listeners once (at boot, usually from a plugin) and they persist across requests. With no listeners, the whole system is a single array lookup per event: it costs nothing when unused.
 
+## How events fit in a request
+
+The framework never scans for listeners; you register them explicitly against the `Events` registry — from a [plugin's](/architecture/plugins/) `register()` (via `$registrar->listen(...)`) or in the front controller before `Kernel::run()`. Once registered, they stay for the worker's life. The framework then **fires its own lifecycle events at fixed points as a request flows through the pipeline**:
+
+> Kernel boots (`KernelBootEvent`) → request enters the pipeline → `RoutingMiddleware` matches a route (`RequestMatchedEvent`) → the action runs (`ActionBeforeEvent` → `ActionAfterEvent`) → `Context::handle()` returns (`ResponseSendingEvent`) → response emitted.
+
+Each event is a plain readonly object carrying the relevant state; your listener runs synchronously at that point. See [The request lifecycle](/architecture/request-lifecycle/) for the surrounding flow.
+
 ## Listening
 
 Register a listener through the `Quiote\Event\Events` facade, keyed by event class, with an optional priority (higher runs first):

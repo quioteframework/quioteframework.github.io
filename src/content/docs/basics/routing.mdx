@@ -5,9 +5,26 @@ description: Declaring routes with a Routing subclass and with #[Route] attribut
 
 import { Tabs, TabItem } from '@astrojs/starlight/components';
 
-Routing maps a URL to a **module** and an **action**. Quiote builds on the Symfony Routing component, but wraps it so routes carry Quiote's `_module` / `_action` metadata and support reverse generation.
+Routing maps a URL to a **module** and an **action** — the two names Quiote needs to find the code that answers a request. It builds on the Symfony Routing component, but wraps it so routes carry Quiote's `_module` / `_action` metadata and support **reverse generation** (building a URL from a route name and parameters).
 
-There are two ways to declare routes, and they coexist in the same route collection: a `Routing` subclass (programmatic) and `#[Route]` attributes on action classes.
+This page covers how to declare routes, how path placeholders reach your action, and how to customise the HTTP-verb-to-method mapping. You declare routes two ways, and they coexist in the same route collection:
+
+- a **`Routing` subclass** (programmatic), and
+- **`#[Route]` attributes** on action classes.
+
+## How routing fits in a request
+
+Routing is one stop in Quiote's [PSR-15 middleware pipeline](/architecture/middleware-pipeline/). The pipeline is built once and reused; `RoutingMiddleware` is the stage that turns a URL into a target action:
+
+1. It matches the request path against the `RouteCollection` your `routing` factory role builds (your `Routing` subclass, plus any merged `#[Route]` attributes).
+2. From the matched route it reads the `_module` and `_action` defaults, and maps the HTTP verb to an action-method token (`read`, `write`, …) via `HttpMethodMapper`.
+3. It packages all of that into an **`ActionDescriptor`** and stores it on the request. Everything downstream — security, validation, dispatch — reads the action from that descriptor.
+
+Where it sits in the pipeline:
+
+> … → `ContentNegotiationMiddleware` picks the output type → **`RoutingMiddleware` resolves the action and builds the `ActionDescriptor`** → `OutputTypeSyncMiddleware` lets a route override the negotiated type → `SecurityMiddleware` checks access → `ValidationMiddleware` validates input (and promotes route placeholders into parameters) → `DispatchMiddleware` runs the action and renders the view.
+
+See [The request lifecycle](/architecture/request-lifecycle/) for the full path.
 
 ## A Routing subclass
 
@@ -123,18 +140,33 @@ They are not mutually exclusive — pick per route:
 
 ## Route parameters in an action
 
-Path placeholders arrive as request parameters. Read them the same way you read validated input — through `WebRequest::getParameter()`:
+Path placeholders arrive as request parameters, read through `WebRequest::getParameter()` — the same call you use for any other input. Reading one requires a declared validator, as shown below:
 
 ```php
 public function executeRead(WebRequest $rd)
 {
+    // requires a validator declared for 'slug' (see below)
     $slug = $rd->getParameter('slug');
     // ...
     return 'Success';
 }
 ```
 
-Parameter access is whitelist-enforced under strict validation (see [Validation](/basics/validation/)), but route placeholders get a free pass on that whitelist: promoting `{slug}` from the matched route into a request parameter goes through `WebRequest::setParameter()`, which auto-whitelists whatever it sets. That means `getParameter('slug')` works even with no validator declared for `slug` at all — route params reach a non-`isSimple()` action without ever passing through a real validator. This is a known, tracked gap, not a documented guarantee: still declare a real validator for a route parameter if you need type/format/range checking (an `{id}` you expect to be numeric, say), since the free whitelist entry says nothing about the value's shape.
+Route placeholders are **not** exempt from strict parameter validation. Here is what happens to a `{slug}` on the way to your action:
+
+1. `RoutingMiddleware` matches the route and records the placeholder value.
+2. `ValidationMiddleware`, before your action runs, promotes it into a request parameter with `WebRequest::setUnvalidatedParameter()`. This *stages* the value so a validator can see and check it, but does **not** whitelist it for `getParameter()`.
+3. A validator declared for `slug` checks the value and whitelists it. With no validator, the staged value is pruned after validation.
+
+So a `{slug}` with no validator is treated exactly like an unvalidated query or body field: `getParameter('slug')` throws `UnvalidatedParameterAccessException` (unless you pass a default).
+
+:::tip[Declare a validator for every route placeholder you read]
+To read a route parameter in a non-`isSimple()` action, declare a validator for its name (see [Validation](/basics/validation/)), the same as any other input. That both whitelists it for `getParameter()` and gives you the type/format/range checking a numeric `{id}`, say, needs.
+:::
+
+:::note[`isSimple()` actions never see route params]
+An `isSimple()` action's parameters are cleared unconditionally, because it has no code path left to read them from.
+:::
 
 ## Customising the HTTP verb mapping
 

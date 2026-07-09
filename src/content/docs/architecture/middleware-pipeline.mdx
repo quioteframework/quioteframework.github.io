@@ -5,13 +5,29 @@ description: What lives in Quiote's PSR-15 pipeline, in what order, and what eac
 
 import { Tabs, TabItem } from '@astrojs/starlight/components';
 
-Quiote handles every request through a single PSR-15 middleware pipeline. Where Agavi had a global/action filter chain, Quiote has an ordered list of standard PSR-15 middlewares run by [Relay](https://relayphp.com/). The pipeline is built once per worker (`Quiote\Middleware\MiddlewarePipeline`) and reused across requests.
+Every request Quiote handles flows through **one PSR-15 middleware pipeline** — an ordered list of small, single-purpose objects that each get a turn to touch the request on the way in and the response on the way out. Routing, security, validation, CSRF, and dispatch are not hidden framework magic; they are individual middleware in this list, and you can print the whole thing with `MiddlewarePipeline::debugStack()`.
 
-This is the heart of Quiote's "no magic" stance: routing, security, validation, CSRF, and dispatch are each a named object in a list you can print with `MiddlewarePipeline::debugStack()`.
+This page is the map of that pipeline: what's in it, in what order, what each piece does, and how to add to or turn off parts of it. If you've used Agavi, this replaces the old global/action filter chain with a single flat list run by [Relay](https://relayphp.com/).
+
+:::note[The pipeline is built once, then reused]
+`Quiote\Middleware\MiddlewarePipeline` assembles the pipeline **once per worker** (in `doBuild()`) and reuses it for every request that worker serves. Building it means: a scanner reads the ordering attributes, a resolver sorts them, and the result is wrapped in a Relay chain that ends in a terminal sentinel. Nothing in the list is re-sorted per request.
+:::
+
+## How it fits in a request
+
+The pipeline **is** the request lifecycle — this is the canonical picture the rest of the docs link back to. Two things happen:
+
+1. **How the framework builds it.** At worker start, `MiddlewareAttributeScanner` finds every class carrying a `#[Middleware(phase, priority, before, after, enabled)]` attribute. `MiddlewareOrderResolver` then sorts them into a single order (the rules are in [How the order is decided](#how-the-order-is-decided) below). `MiddlewarePipeline::doBuild()` wraps that ordered list in a Relay chain and appends a terminal sentinel that throws if execution ever reaches the end without a response.
+
+2. **The path a request takes.** A middleware runs its "before" logic, calls the next one, and gets control back to run its "after" logic — so the list runs *outermost-first inward*, then unwinds:
+
+> Worker boots and builds the pipeline → request enters `ErrorHandlingMiddleware` (outermost) → `SessionMiddleware` starts the session → `PayloadParsingMiddleware` parses the body → `RoutingMiddleware` resolves the action → CSRF and `SecurityMiddleware` check the request → `ValidationMiddleware` validates input → `DispatchMiddleware` runs the action and renders the view → the response unwinds back out through each middleware (CSRF token injection, form repopulation, timing) → response is emitted.
+
+For the full request lifecycle including the kernel and emitter, see [Request lifecycle](/architecture/request-lifecycle/).
 
 ## The stack, in order
 
-Middlewares run outermost-first on the way in, and unwind on the way out. The order is:
+Middlewares run outermost-first on the way in, and unwind on the way out. The default order is:
 
 ```
 ErrorHandlingMiddleware       ← outermost; catches everything
@@ -34,9 +50,24 @@ FormPopulationMiddleware
 ExecutionTimeMiddleware
 ```
 
-This order is not hand-maintained: each middleware carries a `#[Middleware(phase:, priority:, before:, after:)]` attribute, and the pipeline computes the order from them (a scanner reads the attributes; a topological resolver sorts by phase, then `before`/`after` constraints, then priority). The list above is what those attributes currently resolve to. Application middleware can join the same ordering — see [Writing custom middleware](/advanced/custom-middleware/#option-2--the-middleware-attribute).
+The list above is not hand-maintained — it's what the ordering attributes currently resolve to. Application middleware can join the same ordering pass; see [Writing custom middleware](/advanced/custom-middleware/#option-2--the-middleware-attribute).
 
-After the attribute-ordered stack, any middleware added imperatively with `MiddlewareCatalog::register()` is spliced in at its requested position, followed by a terminal sentinel that throws if the pipeline ever runs off the end without producing a response.
+### How the order is decided
+
+Each middleware carries a `#[Middleware(phase:, priority:, before:, after:)]` attribute, and `MiddlewareOrderResolver` turns those attributes into the single order above using two kinds of rule:
+
+- **Phases** are coarse buckets that always sort in this fixed sequence:
+
+  ```
+  bootstrap → pre_routing → pre → routing → before_action → action → after_action → finalize
+  ```
+
+  A middleware's `phase` decides which bucket it lands in. Everything in `bootstrap` runs before anything in `routing`, and so on — regardless of priority.
+
+- **`priority`** breaks ties *within* a phase (higher priority runs first). Scan order is the final tie-breaker.
+- **`before:` / `after:`** are hard placement constraints (topological edges) naming another middleware class. Use these when you must cross a phase boundary — for example, run ahead of a middleware that sits in an earlier phase than yours, which priority alone can never do.
+
+After the attribute-ordered stack, any middleware added imperatively with `MiddlewareCatalog::register()` is spliced into its requested position, and the terminal sentinel is appended last.
 
 ### Where the auth packages insert themselves
 
@@ -55,7 +86,7 @@ Both use explicit `before:`/`after:` anchors rather than `phase`/`priority` tuni
 
 **SessionMiddleware** — starts/attaches the session storage for the request so downstream middlewares (CSRF, security) can read and write it.
 
-**TimingMiddleware / TraceMiddleware** — optional diagnostics. Each is only built if enabled via `<middleware_config>`. `TimingMiddleware` records total request time; `TraceMiddleware` records a running trace of executed middleware. Their response headers are off by default and configured through ordinary `settings.*` keys (`middleware.timing.emit_header`, `middleware.trace.emit_header`/`header_name`) — see the [Middleware reference](/architecture/middleware-reference/#timingmiddleware).
+**TimingMiddleware / TraceMiddleware** — optional diagnostics, both on by default and common to turn off in production (see [Enabling and disabling middlewares](#enabling-and-disabling-middlewares)). `TimingMiddleware` records total request time; `TraceMiddleware` records a running trace of executed middleware. Their response headers are off by default and configured through ordinary `settings.*` keys (`middleware.timing.emit_header`, `middleware.trace.emit_header`/`header_name`) — see the [Middleware reference](/architecture/middleware-reference/#timingmiddleware).
 
 **PayloadParsingMiddleware** — parses the request body: JSON bodies and form bodies become the parsed body / parameters that validation and actions read.
 
@@ -85,45 +116,99 @@ Both use explicit `before:`/`after:` anchors rather than `phase`/`priority` tuni
 
 ## Enabling and disabling middlewares
 
-**Any** middleware in the pipeline — framework or application — can be switched off. Each middleware's `#[Middleware(enabled:)]` sets its default, and an entry in the `config_handlers` middleware map overrides that default. In XML it's a `<middleware_config>` element; in PHP/YAML it's the reserved `__middleware_config` key:
+**Any** middleware in the pipeline — framework or application — can be switched off. The default on/off state comes from each middleware's `#[Middleware(enabled:)]` attribute (every framework middleware ships on); you override that default in a dedicated **`middleware.{xml,php,yaml,yml}`** config file, read by `MiddlewareConfigHandler`.
+
+To disable a middleware, add a `<use>` entry for its class with `enabled` set to `false`:
 
 <Tabs syncKey="config-format">
 <TabItem label="PHP">
 
 ```php
-// Config/config_handlers.php
-'__middleware_config' => [
-    'Quiote\\Middleware\\TimingMiddleware' => false,
-],
+// Config/middleware.php
+return [
+    ['class' => \Quiote\Middleware\TimingMiddleware::class, 'enabled' => false],
+];
 ```
 
 </TabItem>
 <TabItem label="YAML">
 
 ```yaml
-# Config/config_handlers.yaml
-__middleware_config:
-  'Quiote\Middleware\TimingMiddleware': false
+# Config/middleware.yaml
+- class: Quiote\Middleware\TimingMiddleware
+  enabled: false
 ```
 
 </TabItem>
 <TabItem label="XML">
 
 ```xml
-<!-- Config/config_handlers.xml -->
-<middleware_config>
-  <middleware class="Quiote\Middleware\TimingMiddleware" enabled="false" />
-</middleware_config>
+<!-- Config/middleware.xml -->
+<ae:configurations xmlns:ae="http://quiote.dev/quiote/config/global/envelope/1.1"
+                   xmlns="http://quiote.dev/quiote/config/parts/middleware/1.1">
+  <ae:configuration>
+    <use class="Quiote\Middleware\TimingMiddleware" enabled="false" />
+  </ae:configuration>
+</ae:configurations>
 ```
 
 </TabItem>
 </Tabs>
 
-A middleware without an entry uses its attribute's `enabled` default (all framework middleware default to on). A disabled middleware is never constructed. The full mechanism and schema are in the [Middleware reference](/architecture/middleware-reference/#enabling-and-disabling).
+A middleware without an entry keeps its attribute's `enabled` default (all framework middleware default to on). A disabled middleware is never constructed.
+
+:::caution[This replaces the old `config_handlers` mechanism]
+Earlier versions toggled middleware through a `__middleware_config` key (or `<middleware_config>` element) inside `config_handlers`. That block is **no longer read** — the same `middleware.*` file now owns enable/disable. If you still have a `__middleware_config` entry, move it to `middleware.*`.
+:::
+
+The same `<use>` entry can carry `phase`, `priority`, `before`, and `after` to place a middleware, and `override-framework` (XML) / `override_framework` (PHP/YAML) to override the placement of a framework middleware — so this one file is also how apps and modules add middleware declaratively. See [Writing custom middleware](/advanced/custom-middleware/) and the full schema in the [Middleware reference](/architecture/middleware-reference/#enabling-and-disabling).
 
 ## Injecting your own middleware
 
-Applications add their own middleware three ways — a declarative `middleware.xml`/`.php`/`.yaml` config file (no code, and the only way a module can register middleware just by being present), the `#[Middleware]` attribute plus `MiddlewareCatalog::registerAttributed()` (joins the framework's ordering pass), or `MiddlewareCatalog::register()` (imperative, spliced in afterwards). All three are covered end to end — including where to register and the ordering caveats — in [Writing custom middleware](/advanced/custom-middleware/).
+Applications add their own middleware three ways:
+
+1. **Declaratively, in `middleware.{xml,php,yaml,yml}`** — no code required. Because any module's `Config/` directory can carry this file, it's also the only way a module registers middleware just by being present. Each entry is a `<use>` with the same fields as the enable/disable form above:
+
+   <Tabs syncKey="config-format">
+   <TabItem label="PHP">
+
+   ```php
+   // Config/middleware.php
+   return [
+       ['class' => \App\Middleware\RequestIdMiddleware::class, 'phase' => 'bootstrap', 'priority' => 80],
+   ];
+   ```
+
+   </TabItem>
+   <TabItem label="YAML">
+
+   ```yaml
+   # Config/middleware.yaml
+   - class: App\Middleware\RequestIdMiddleware
+     phase: bootstrap
+     priority: 80
+   ```
+
+   </TabItem>
+   <TabItem label="XML">
+
+   ```xml
+   <!-- Config/middleware.xml -->
+   <ae:configurations xmlns:ae="http://quiote.dev/quiote/config/global/envelope/1.1"
+                      xmlns="http://quiote.dev/quiote/config/parts/middleware/1.1">
+     <ae:configuration>
+       <use class="App\Middleware\RequestIdMiddleware" phase="bootstrap" priority="80" />
+     </ae:configuration>
+   </ae:configurations>
+   ```
+
+   </TabItem>
+   </Tabs>
+
+2. **The `#[Middleware]` attribute plus `MiddlewareCatalog::registerAttributed()`** — your class joins the framework's ordering pass and is placed by its own attribute.
+3. **`MiddlewareCatalog::register()`** — register a middleware imperatively; it's spliced into the built stack afterwards (with no `before`/`after`, it lands right after `ValidationMiddleware`).
+
+All three are covered end to end — including where to register and the ordering caveats — in [Writing custom middleware](/advanced/custom-middleware/).
 
 For the rare case where an app cannot run inside this lifecycle at all, `MiddlewareCatalog::replaceCoreStack()` discards the entire default stack and lets you supply your own — a deliberate footgun, gated behind an exact acknowledgement string. See [Replacing the entire stack](/advanced/custom-middleware/#replacing-the-entire-stack-the-footgun).
 

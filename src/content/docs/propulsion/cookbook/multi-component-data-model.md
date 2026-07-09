@@ -27,7 +27,7 @@ For the whole project, set the main package in your configuration file:
 <?php
 // build.php
 return [
-    'propulsion.generator.targetPackage' => 'my_project',
+    'propulsion.targetPackage' => 'my_project',
 ];
 ```
 
@@ -58,7 +58,7 @@ Thanks to the `package` attribute, tables are grouped into:
 * `my_project.book` package: the `book` and `review` tables
 
 :::caution
-If you split tables related by a foreign key across separate packages (like `book` and `author` here), you must enable the `packageObjectModel` build property so Propulsion considers other packages when resolving relations.
+Splitting tables related by a foreign key across separate *files* (like `book.schema.xml` and `author.schema.xml` here) is not automatically resolved just by giving the files a shared `<database name="...">`: each schema file is parsed into its own model independently, so a table can only see other tables declared in the same file. To let `book`'s foreign key resolve against `author`, declare an explicit `<external-schema filename="author.schema.xml"/>` element inside `book.schema.xml`'s `<database>` element (see the `external-schema` element in the schema DTD). The `packageObjectModel` build property exists in `generator/default.php` but is not read anywhere in Propulsion's current build pipeline — setting it has no effect.
 :::
 
 You can also override `package` at the `<table>` element level:
@@ -98,7 +98,7 @@ You can use dots in a package name to add more package levels.
 
 A table's `package` attribute translates to the directory Propulsion generates its Model classes into.
 
-If no `package` attribute is set anywhere, Propulsion places all classes according to `propulsion.generator.targetPackage`:
+If no `package` attribute is set anywhere, Propulsion places all classes according to `propulsion.targetPackage`:
 
 * `generated-classes/`
   * `Base/`
@@ -110,7 +110,7 @@ If no `package` attribute is set anywhere, Propulsion places all classes accordi
   * `Review.php`
   * `ReviewQuery.php`
 
-You can further control where Propulsion writes generated files by changing `propulsion.paths.outputDir`. By default this is the directory you run `bin/propulsion` commands from; point it at any other directory to use as your build output root.
+You can further control where Propulsion writes generated files with the `--output-dir`/`-o` option on `model:build` (and `sql:build` for SQL, see below). There is no `outputDir` build-config property for this — it's a command-line option, and it defaults to `./generated-classes` for `model:build`.
 
 If you set up packages at the `<database>` level, Propulsion splits the generated model classes into subdirectories named after the package:
 
@@ -149,31 +149,18 @@ And, if you specialize `package` per table, one table can use its own package:
 
 ### Packages and SQL files
 
-Propulsion also considers packages for SQL generation, producing one SQL file per package. Each file contains the `CREATE TABLE` statements needed for all the tables in that package.
+SQL generation does *not* split by package. `sql:build` writes exactly one `.sql` file per distinct `<database name="...">` value: all `CREATE TABLE` statements for every schema file (and every package) that shares that database `name` are concatenated together into that one file, named `<name>.sql`.
 
-By default, without any package overrides, all tables end up in a single SQL file:
-
-* `generated-sql/`
-  * `schema.sql`
-
-If you specialize `package` for each `<database>` element, Propulsion uses it to split the SQL file too:
+For the `author.schema.xml`/`book.schema.xml` example above, both files declare `<database name="bookstore" ...>`, so regardless of their different `package` attributes (`author`, `book`, `review`), the output is a single file:
 
 * `generated-sql/`
-  * `author.schema.sql` — `CREATE TABLE author`
-  * `book.schema.sql` — `CREATE TABLE book` and `CREATE TABLE review`
+  * `bookstore.sql` — `CREATE TABLE author`, `CREATE TABLE book`, and `CREATE TABLE review`
 
-And a package overridden at the table level also produces its own independent SQL file:
-
-* `generated-sql/`
-  * `author.schema.sql` — `CREATE TABLE author`
-  * `book.schema.sql` — `CREATE TABLE book`
-  * `review.schema.sql` — `CREATE TABLE review`
+To get separate SQL files, give the `<database>` elements different `name` attributes instead of relying on `package`.
 
 ## Understanding `packageObjectModel`
 
-The `propulsion.generator.packageObjectModel` configuration property enables the "packaged" build process. It changes how build commands join `<database>` elements: elements sharing the same `name` are merged, while their packages are kept separate. This lets you split a large schema across several files regardless of foreign-key dependencies between them, since Propulsion joins all schema files sharing a database name before resolving relations.
-
-This property is enabled by default.
+`propulsion.packageObjectModel` is a build property defined in `generator/default.php` (defaulting to `false`), but it is not currently read anywhere in Propulsion's build pipeline — toggling it has no observable effect on `model:build` or `sql:build`. Each schema file passed to a build command is parsed into its own independent model; a table can only resolve foreign keys against tables declared in the *same file*, regardless of whether other files share its database `name`. To reference tables defined in another file, use an explicit `<external-schema filename="..."/>` element inside the `<database>` element that needs the reference.
 
 ## A packaged example
 
@@ -199,10 +186,10 @@ More than one schema file can belong to the same package — for example, `book.
 
 ### The Object Model build
 
-To build the packaged example, run from the project directory containing these schema files:
+To build the packaged example, run from the project directory containing these schema files (the `schema` argument tells the command where to look — its default is `./schema`, so pass `.` to scan the current directory instead):
 
 ```bash
-php bin/propulsion model:build
+php bin/propulsion model:build .
 ```
 
 This produces a directory tree along these lines (the `Base/` and `Map/` subdirectories under each package are omitted for clarity):
@@ -231,20 +218,16 @@ This produces a directory tree along these lines (the `Base/` and `Map/` subdire
 From the same schema files, generate SQL with:
 
 ```bash
-php bin/propulsion sql:build
+php bin/propulsion sql:build .
 ```
 
-Inspect the `generated-sql/` directory: one SQL file has been created per package attribute found in the schema files:
+Inspect the `generated-sql/` directory: one SQL file has been created per distinct `<database name="...">` value, *not* per package. If `author.schema.xml`, `book.schema.xml`, `club.schema.xml`, `media.schema.xml`, `publisher.schema.xml`, and `review.schema.xml` all declare `<database name="bookstore" ...>` while `log.schema.xml` declares `<database name="bookstore-log" ...>`, the build produces just two files:
 
-* `addon.club.schema.sql`
-* `core.author.schema.sql`
-* `core.book.schema.sql`
-* `core.publisher.schema.sql`
-* `core.review.schema.sql`
-* `util.log.schema.sql`
+* `bookstore.sql` — `CREATE TABLE` statements for every table across the six `bookstore` schema files, regardless of their `package` attribute
+* `bookstore-log.sql` — `CREATE TABLE` statements for `log.schema.xml`'s table
 
-Each file contains the `CREATE TABLE` statements for its package. Run `sql:exec` to execute them against your configured database:
+Run `sql:exec` to execute a file against your configured database (it requires an explicit list of `.sql` files and connection options — there's no config-driven auto-discovery):
 
 ```bash
-php bin/propulsion sql:exec
+php bin/propulsion sql:exec generated-sql/bookstore.sql --dsn="pgsql:host=localhost;dbname=mydb" --user=me --password=secret
 ```

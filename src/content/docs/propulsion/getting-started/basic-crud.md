@@ -37,7 +37,7 @@ echo $author->getLastName();  // 'Austen'
 
 `id` was assigned by the database, since the schema marks it `autoIncrement` — it's populated on the object as soon as `save()` returns. None of these getter calls hit the database; the object is already loaded in memory.
 
-You can also export an object's properties in bulk with `toArray()`, `toXML()`, `toYAML()`, `toJSON()`, `toCSV()`, and `__toString()` — each has a matching `fromXXX()` import counterpart:
+You can also export an object's properties in bulk with `toArray()`, `toXML()`, `toYAML()`, `toJSON()`, and `toCSV()` — each has a matching `fromXXX()` import counterpart. `__toString()` is also generated, but returns a single column's value (or a default export format) rather than something importable:
 
 ```php
 <?php
@@ -141,15 +141,15 @@ $stmt = $con->prepare($sql);
 $stmt->execute([':name' => 'Austen']);
 ```
 
-To hydrate `Book` objects from the resulting statement, use `ObjectFormatter`:
+To hydrate `Book` objects from the resulting statement, use `PropulsionObjectFormatter`:
 
 ```php
 <?php
-use Propulsion\Formatter\ObjectFormatter;
+use Propulsion\Formatter\PropulsionObjectFormatter;
 
-$formatter = new ObjectFormatter();
+$formatter = new PropulsionObjectFormatter();
 $formatter->setClass(Book::class);
-$books = $formatter->format($con->getDataFetcher($stmt));
+$books = $formatter->format($stmt);
 ```
 
 The result set must be numerically indexed, must contain every column of the table (except lazy-loaded ones), and must list columns in the same order they're defined in `schema.xml`.

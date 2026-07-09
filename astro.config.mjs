@@ -107,6 +107,7 @@ export default defineConfig({
 								label: 'Working with data',
 								items: [
 									{ label: 'Relationships', slug: 'propulsion/basics/relationships' },
+									{ label: 'Validators', slug: 'propulsion/basics/validators' },
 									{ label: 'Transactions', slug: 'propulsion/basics/transactions' },
 									{ label: 'Inheritance', slug: 'propulsion/basics/inheritance' },
 									{ label: 'Schema migrations', slug: 'propulsion/basics/migrations' },
@@ -128,7 +129,6 @@ export default defineConfig({
 									{ label: 'Sluggable', slug: 'propulsion/behaviors/sluggable' },
 									{ label: 'Sortable', slug: 'propulsion/behaviors/sortable' },
 									{ label: 'Timestampable', slug: 'propulsion/behaviors/timestampable' },
-									{ label: 'Validate', slug: 'propulsion/behaviors/validate' },
 									{ label: 'Versionable', slug: 'propulsion/behaviors/versionable' },
 								],
 							},

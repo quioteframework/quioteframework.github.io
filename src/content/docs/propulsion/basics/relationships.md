@@ -182,7 +182,7 @@ A junction table marked `isCrossRef="true"` is exposed on both ends as a plain o
 </table>
 ```
 
-Cross-reference tables with more than two primary-key columns (an extra `type` discriminator column, say) generate additional parameters and an `ObjectCombinationCollection`-returning `getGroupTypes()`-style accessor — this shape is unchanged from Propel 1; consult Propel 1's original [relationships documentation](https://propelorm.github.io/documentation/04-relationships.html#more-than-two-primary-keys) for the full multi-column-primary-key method signatures if your schema needs one.
+Cross-reference tables with more than two primary-key columns (an extra `type` discriminator column, say) aren't specially supported — Propulsion's generator only ever pairs the two foreign keys of a cross-reference table when building the `addXXX()`/`getXXX()`/`countXXX()` accessors, so a third primary-key column doesn't get its own combination accessor. Stick to the two-foreign-key shape shown above.
 
 ## One-to-one relationships
 

@@ -12,11 +12,8 @@ Adjust the behavior by adding parameters:
 ```xml
 <behavior name="archivable">
   <parameter name="archive_table" value="special_book_archive" />
-  <parameter name="archive_phpname" value="MySpecialBookArchive" />
   <parameter name="log_archived_at" value="true" />
   <parameter name="archived_at_column" value="archival_date" />
-  <parameter name="inherit_foreign_key_relations" value="true" />
-  <parameter name="inherit_foreign_key_constraints" value="true" />
 </behavior>
 ```
 
@@ -25,17 +22,12 @@ These parameters are available:
 | Parameter | Value | Description | Default |
 |---|---|---|---|
 | `archive_table` | literal | Name of the table storing archive data. Created if it doesn't exist. Cannot be combined with `archive_class`. | Original table name with suffix `_archive` |
-| `archive_phpname` | literal | Sets the name of the generated PHP model and query classes. | Pascal-case version of `archive_table` |
-| `sync` | `true`/`false` | If true, changes to the source table definition are also applied to `archive_table`. | `false` |
 | `archive_class` | literal | Name of an existing model class. The underlying table is used to store the archive. Cannot be combined with `archive_table`. | none |
 | `log_archived_at` | `true`/`false` | Enables or disables the additional archival timestamp column. | `true` |
 | `archived_at_column` | literal | Sets the name of the column storing the archival datetime. | `archived_at` |
 | `archive_on_insert` | `true`/`false` | Archive row data on insert. | `false` |
 | `archive_on_update` | `true`/`false` | Archive row data on update. | `false` |
 | `archive_on_delete` | `true`/`false` | Archive row data on delete. | `true` |
-| `inherit_foreign_key_relations` | `true`/`false` | Inherit foreign key relations from the source table. Adds getters/setters on the model and join methods on the query class of the archive table. | `false` |
-| `inherit_foreign_key_constraints` | `true`/`false` | Same as `inherit_foreign_key_relations`, but also creates foreign key constraints in the database to the referenced columns of the source table. | `false` |
-| `foreign_keys` | list (see below) | Manually set foreign keys on the archive table. | none |
 
 ## Basic usage
 
@@ -210,162 +202,6 @@ The behavior can use another database connection for the archive table, to make 
 The archive table must have the same columns as the archivable table, but without auto-increments and without foreign keys.
 
 With this setup, the behavior uses `MyBookArchive` and `MyBookArchiveQuery` for all operations on archives, and therefore uses the `backup` connection.
-
-## Foreign keys
-
-There are four ways to handle foreign keys on the archive table:
-
-1. Inherit all relations from the source table, but without database constraints.
-2. Same as above, but also add database constraints.
-3. Declare foreign keys on the behavior.
-4. Manually create the archive table with foreign keys.
-
-### Inheriting relations but not foreign key constraints
-
-Use this option if foreign key references might break after archiving. This often occurs when data in the referenced table is archived at a different time, so referenced data might be in the original table or in the archive. In this case, it's not possible to enforce a foreign key constraint at the database level — but Propulsion can still create logical relations between the model and query classes of the source and archive table, which makes it easy to work with the tables:
-
-```php
-// getters/setters on the archive model
-$author = $archivedBook->getAuthor();
-$archivedBook->setAuthor($myAuthor);
-
-// getters/setters on the source model
-$archivedBook = $author->getArchivedBooks();
-$author->addArchivedBook($archivedBook);
-
-// join methods on the archive query object
-ArchivedBookQuery::create()->joinWithAuthor();
-
-// join methods on the source query object
-AuthorQuery::create()->useArchivedBookQuery();
-```
-
-To inherit relations from the source table, set the `inherit_foreign_key_relations` parameter:
-
-```xml
-<behavior name="archivable">
-  <parameter name="inherit_foreign_key_relations" value="true" />
-</behavior>
-```
-
-### Inheriting relations and foreign key constraints
-
-If foreign key references of archived data point to the same table as the source table, it's best to ensure referential integrity through a database constraint — a typical example is when the archived table contains links to lookup tables.
-
-To create foreign key constraints in the database, use the `inherit_foreign_key_constraints` parameter:
-
-```xml
-<behavior name="archivable">
-  <parameter name="inherit_foreign_key_constraints" value="true" />
-</behavior>
-```
-
-### Declaring foreign keys on the behavior
-
-For more complex scenarios, you can declare foreign keys on the behavior. This lets you add relations that don't apply to the source table and gives more control over which relations and constraints are created — a typical example is an archive table that references data in another archived table. Relations defined through this parameter override inherited relations with the same name, so it can be used to fix up individual references that break during archival.
-
-With the `foreign_keys` parameter, a list of foreign key definitions is passed to the behavior. The parameters are the same as in regular `<foreign-key>` declarations, except that source and target column are also declared by the parameter (`localColumn` and `foreignColumn` respectively), instead of a `<reference>` tag. That means complex foreign keys can't be declared on behaviors.
-
-Using the `skipSql` parameter creates relations without creating database foreign key constraints.
-
-```xml
-<behavior name="archivable">
-  <parameter-list name="foreign_keys">
-    <!-- archived data points to another archived table -->
-    <parameter-list-item>
-      <parameter name="localColumn" value="sale_id" />
-      <parameter name="foreignTable" value="archived_sale" />
-      <parameter name="foreignColumn" value="id" />
-    </parameter-list-item>
-
-    <!-- referenced data may or may not be archived, create relations to both tables without constraints -->
-    <parameter-list-item>
-      <parameter name="localColumn" value="customer_id" />
-      <parameter name="foreignTable" value="customer" />
-      <parameter name="foreignColumn" value="id" />
-      <parameter name="skipSql" value="true" />
-    </parameter-list-item>
-    <parameter-list-item>
-      <parameter name="localColumn" value="customer_id" />
-      <parameter name="foreignTable" value="archived_customer" />
-      <parameter name="foreignColumn" value="id" />
-      <parameter name="skipSql" value="true" />
-    </parameter-list-item>
-  </parameter-list>
-</behavior>
-```
-
-### Manually creating the archive table with foreign keys
-
-Finally, if complex foreign keys are needed, or the `foreign_keys` parameter grows unwieldy, the archive table can be added like a regular table with regular foreign key declarations:
-
-```xml
-<table name="item">
-  <behavior name="archivable" />
-  <column name="sale_id" type="integer" />
-  <foreign-key foreignTable="sale">
-    <reference local="sale_id" foreign="id" />
-  </foreign-key>
-</table>
-
-<table name="sale">
-  <behavior name="archivable" />
-  <column name="id" type="integer" primaryKey="true" />
-</table>
-
-<table name="item_archive">
-  <column name="sale_id" />
-  <foreign-key foreignTable="sale_archive">
-    <reference local="sale_id" foreign="id" />
-  </foreign-key>
-</table>
-
-<table name="sale_archive">
-  <column name="id" type="integer" primaryKey="true" />
-</table>
-```
-
-Combined with the `sync` parameter, this allows precise declaration of table constraints without losing flexibility.
-
-## Syncing changes from the source table to the archive table
-
-When the table given in the `archive_table` parameter exists in `schema.xml`, all columns from the original table must be declared on it as well. This can be cumbersome when schema changes to the source table have to be copied to the archive table. With the `sync` parameter, Propulsion automatically keeps the archive table up to date with the source table.
-
-With sync enabled, changes to columns and indexes in the source table are applied to the archive table as well. Foreign key relations are also included when `inherit_foreign_key_relations` or `inherit_foreign_key_constraints` is set.
-
-Sync will not override explicit declarations on the archive table, which allows you to override individual elements from the source table.
-
-```xml
-<table name="my_data">
-  <behavior name="archivable">
-    <parameter name="archive_table" value="my_archived_data" />
-    <parameter name="sync" value="true" />
-    <parameter name="inherit_foreign_key_constraints" value="true" />
-  </behavior>
-  <column name="id" type="integer" />
-  <column name="my_text" type="varchar" size="32" />
-  <column name="fk1_id" type="integer" />
-  <foreign-key foreignTable="fk_table1">
-    <reference local="fk1_id" foreign="id" />
-  </foreign-key>
-  <column name="fk2_id" type="integer" />
-  <foreign-key foreignTable="fk_table2" name="second_fk">
-    <reference local="fk2_id" foreign="id" />
-  </foreign-key>
-  <!-- more columns, fks and indices -->
-</table>
-
-<table name="my_archived_data">
-  <!-- keep old size of varchar column -->
-  <column name="my_text" type="varchar" size="99" />
-  <!-- override second fk -->
-  <column name="fk2_id" type="integer" />
-  <foreign-key foreignTable="archived_fk_table2" name="second_fk">
-    <reference local="fk2_id" foreign="id" />
-  </foreign-key>
-  <!-- all other data will be copied by sync -->
-</table>
-```
 
 ## Migrating from `soft_delete`
 

@@ -7,6 +7,23 @@ Quiote grew out of [Agavi](https://github.com/agavi/agavi), and it keeps Agavi's
 
 This guide maps the familiar concepts to their Quiote form and suggests an order to move an application across. It is deliberately incremental: Quiote retains fallbacks for several Agavi conventions so you can migrate a module at a time rather than in one cut.
 
+## At a glance: Agavi to Quiote
+
+Use this table to find the Quiote equivalent of an Agavi concept. The sections below explain each change in detail.
+
+| Agavi | Quiote | What to do |
+|---|---|---|
+| Flat class names (`Blog_PostAction`) | PSR-4 namespaces (`App\Modules\Blog\Actions\PostAction`) | Namespace incrementally — the flat-name fallback keeps unported classes running. |
+| `Agavi` class prefix | `Quiote\` class prefix | Update `use` statements as you touch each file. |
+| `factories.xml` + context lookups | `factories` config (framework roles) + [DI container](/architecture/container/) (app code) | Declare dependencies as constructor parameters; let the container autowire. |
+| Singleton "models" | [Services](/basics/services-and-models/) (container-managed) | Move behaviour to services; keep data in `getModel()`. |
+| Execution filters | [Middleware pipeline](/architecture/middleware-pipeline/) | Rewrite each filter as a [custom middleware](/advanced/custom-middleware/). |
+| `routing.xml` | `Routing::build()` and `#[Route]` attributes | Define routes in code; the `routing.xml` handler is not wired. |
+| XML-only config | XML **or** PHP **or** YAML, per file | Leave XML in place; write new config in any format. |
+| `validators.xml` only | `validators.xml` **or** the fluent PHP builder | Keep XML; migrate rules to PHP one at a time. |
+| Request-per-process runtime | Worker-mode-first runtime | Audit singletons and static state for cross-request leaks. |
+| `SecurityUser` / RBAC / `rbac_definitions.xml` | Same — carried over intact | No change needed. |
+
 ## What carries over unchanged
 
 - **Module layout.** `Modules/{Name}/Actions|Views|Templates` is the same. See [Modules](/basics/modules/).

@@ -93,6 +93,14 @@ telemetry.otlp.endpoint: 'http://localhost:4318'
 
 Turning `telemetry.enabled` on is necessary but not sufficient: the SDK must also be installed. `TelemetryBootstrap` (run once per worker from the kernel) fails safe — if telemetry is disabled, the SDK is missing, or exporter config is bad, it stays off rather than throwing.
 
+## How it fits in a request
+
+`TelemetryMiddleware` is discovered like any other middleware — the kernel scans its `#[Middleware(phase: 'bootstrap', priority: 950)]` attribute and the resolver orders it just **inside** `ErrorHandlingMiddleware` (priority 1000). It opens the root request span before routing runs, so every downstream span nests under it:
+
+> Request enters `ErrorHandlingMiddleware` → **`TelemetryMiddleware`** opens the root `Quiote.Http` server span and enriches `LogContext` with `trace_id`/`span_id` → `RoutingMiddleware` renames the span to the route identity → the action and view open nested spans → response returns → the middleware records metrics and closes the span → telemetry is flushed at the worker reset.
+
+When telemetry is off the middleware is a single `if (!Trace::enabled())` pass-through, so leaving it in the pipeline is free. See [The middleware pipeline](/architecture/middleware-pipeline/).
+
 ## How it works
 
 - **`TelemetryBootstrap`** builds the tracer/meter providers once per worker from `telemetry.*`, holds them for the worker's lifetime, flushes after each request, and shuts down cleanly (even in single-shot mode, via a shutdown function).

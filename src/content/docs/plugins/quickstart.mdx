@@ -5,7 +5,9 @@ description: Copy-pasteable steps for the most common plugin and middleware task
 
 import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 
-Practical, task-oriented steps for the most common jobs. For the full mechanism and design, see [Plugins and extensibility](/architecture/plugins/) and [The middleware pipeline](/architecture/middleware-pipeline/) / [Writing custom middleware](/advanced/custom-middleware/).
+This is the copy-paste cookbook for the most common plugin and middleware jobs. A **plugin** is a package that contributes to the framework at boot; **middleware** is a stage in the per-request pipeline. Most tasks here follow the same shape — `composer require` the code, then activate it in a config file under your app's `Config/` directory. Each recipe below is self-contained; work through the one you need.
+
+For the full mechanism and design behind these steps, see [Plugins and extensibility](/architecture/plugins/) and [The middleware pipeline](/architecture/middleware-pipeline/) / [Writing custom middleware](/advanced/custom-middleware/).
 
 <Aside type="note" title="The security model, in one sentence">
 An attribute (`#[Plugin]` / `#[Middleware]`) makes a class *eligible*; a config file (`plugins.*` / `middleware.*`) is what *activates* it. Neither one alone does anything — `composer require`-ing a package, by itself, can never turn a plugin or middleware on.
@@ -267,6 +269,10 @@ See [Error handling: Developer vs safe rendering](/architecture/error-handling/#
 
 A module can also ship its own `Modules/<Name>/Config/plugins.php` — it's discovered automatically (no app wiring needed); app-declared plugins are compiled first, so the app always wins on a same-class conflict.
 
+<Aside type="note" title="How your plugin fits in a request">
+`register()` runs **once at boot**, not per request: `PluginManager` reads `Config/plugins.*`, checks the `#[Plugin]` attribute, and calls `register()` in declared order — after your `settings.*` load, before any request is served. Whatever you contributed is then simply present when requests run. The `HealthzMiddleware` above joins the pipeline as a station (`ErrorHandlingMiddleware` → … → `RoutingMiddleware` → **`HealthzMiddleware`** → … → `DispatchMiddleware`), placed by its `#[Middleware(phase: 'pre_routing', …)]`; a `configDefault` or `service` instead becomes a value an action or middleware reads mid-request. See [Plugins overview: How a plugin reaches a request](/plugins/overview/#how-a-plugin-reaches-a-request).
+</Aside>
+
 See [Plugins and extensibility](/architecture/plugins/) for the full contribution table and ordering rules.
 
 ## Write your own middleware
@@ -342,7 +348,7 @@ See [Plugins and extensibility](/architecture/plugins/) for the full contributio
 
    Same as plugins, a module's own `Modules/<Name>/Config/middleware.*` is discovered automatically, no app wiring needed.
 
-   Two code-based alternatives also exist (see [Writing custom middleware](/advanced/custom-middleware/) for full detail): `MiddlewareCatalog::registerAttributed($fqcn)` (attribute required, DI-resolved) and `MiddlewareCatalog::register($fqcn, $factory, after:, before:, priority:)` (positional, explicit factory — the escape hatch for middleware that needs constructor args the container can't autowire).
+   Two code-based alternatives also exist (see [Writing custom middleware](/advanced/custom-middleware/) for full detail): `MiddlewareCatalog::registerAttributed($fqcn)` (attribute required, DI-resolved) and `MiddlewareCatalog::register($fqcn, $factory, after:, before:, priority:)` (positional, explicit factory — the direct low-level path for middleware that needs constructor args the container can't autowire).
 
 3. **Never touch a shipped framework middleware without both switches.** Naming one of Quiote's own classes (`ErrorHandlingMiddleware`, `SessionMiddleware`, `RoutingMiddleware`, `SecurityMiddleware`, etc. — see `MiddlewarePipeline::coreMiddlewareClasses()`) to change its placement or `enabled` state requires **both**, on purpose. First, the entry itself:
 

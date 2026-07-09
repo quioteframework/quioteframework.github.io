@@ -98,7 +98,7 @@ The behavior adds a `computeXXX()` method to the `Post` class to compute the val
 
 ```php
 // in om/BasePost.php
-public function computeNbComments(PropulsionPDO $con): int
+public function computeNbComments(PropulsionPDO $con)
 {
     $stmt = $con->prepare('SELECT COUNT(id) FROM `comment` WHERE comment.POST_ID = :p1');
     $stmt->bindValue(':p1', $this->getId());
@@ -123,32 +123,6 @@ By default, the behavior adds one column to the model. If this column is already
     <parameter name="name" value="nb_comments" />
     <parameter name="foreign_table" value="comment" />
     <parameter name="expression" value="COUNT(id)" />
-  </behavior>
-</table>
-```
-
-## Multiple aggregations
-
-If a table aggregates multiple columns from the same foreign table, it's more efficient to bundle them together, so the aggregations can be performed in a single statement. This can be achieved with the `aggregate_multiple_columns` behavior:
-
-```xml
-<table>
-  <column name="number_of_communications" type="INTEGER" />
-  <column name="total_communication_time" type="INTEGER" />
-
-  <behavior name="aggregate_multiple_columns" id="partner_aggregations">
-    <parameter name="foreign_table" value="communication" />
-
-    <parameter-list name="columns">
-      <parameter-list-item>
-        <parameter name="column_name" value="number_of_communications" />
-        <parameter name="expression" value="COUNT(id)" />
-      </parameter-list-item>
-      <parameter-list-item>
-        <parameter name="column_name" value="total_communication_time" />
-        <parameter name="expression" value="SUM(duration)" />
-      </parameter-list-item>
-    </parameter-list>
   </behavior>
 </table>
 ```

@@ -276,6 +276,7 @@ int   countChildren()
 int   countDescendants()
 
 // tree traversal methods
+$node setParent($node)
 $node getParent()
 $node getPrevSibling()
 $node getNextSibling()
@@ -306,10 +307,13 @@ $node deleteDescendants()
 // only for behavior with method_proxies
 $node createRoot()
 $node retrieveParent()
+$node setParentNode($node)
 $node retrievePrevSibling()
 $node retrieveNextSibling()
 $node retrieveFirstChild()
 $node retrieveLastChild()
+int   getNumberOfDescendants()
+int   getNumberOfChildren()
 array getPath()
 ```
 
@@ -335,7 +339,7 @@ $node findRoot($scope = null)
 coll findTree($scope = null)
 ```
 
-A few more methods added to the query classes:
+A few more static methods added to the peer classes (e.g. `SectionPeer::retrieveRoot()`), not the query classes:
 
 ```php
 $node retrieveRoot($scope = null)

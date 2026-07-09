@@ -17,7 +17,34 @@ Three words that get used together here, kept straight:
 - **A plugin** — a class implementing `Quiote\Plugin\PluginInterface`. Its one `register()` call contributes to the core's seams. See [Plugins and extensibility](/architecture/plugins/) for the mechanism and how to write your own.
 - **A package** — a Composer package (`quioteframework/*` for the official ones) that *contains* a plugin (and its dependency). Installing the package puts the code on disk; enabling its plugin wires it in.
 
-The framework itself dogfoods this: **a whole family of subsystems that used to live in the core have been extracted into their own packages** — CSRF, rate limiting, the Whoops error page, the MCP server, OpenTelemetry export, the telemetry dashboard, the Eloquent / Doctrine / Cycle / Propulsion database adapters, the PHPTAL / XSLT / Twig template renderers, and PDO / Azure / S3 / GCS session backends. None of them is part of the kernel any more; each is a drop-in you choose (all MIT-licensed, atop the LGPL kernel). They're catalogued in [Official packages](/plugins/official-packages/).
+The framework itself dogfoods this: **a whole family of subsystems that used to live in the core have been extracted into their own packages.** None of them is part of the kernel any more; each is a drop-in you choose (all MIT-licensed, atop the LGPL kernel). They fall into a few groups:
+
+- **Security & web** — CSRF, rate limiting, and the auth packages.
+- **Developer experience** — the Whoops error page and the MCP server.
+- **Observability** — OpenTelemetry export and the telemetry dashboard.
+- **Persistence** — the Eloquent / Doctrine / Cycle / Propulsion database adapters and the PDO / Azure / S3 / GCS session backends.
+- **Rendering** — the PHPTAL / XSLT / Twig template renderers.
+
+Each one is catalogued, with its install and enable steps, in [Official packages](/plugins/official-packages/).
+
+## Plugin vs. middleware
+
+These two get confused because a plugin so often *adds* middleware — but they are different kinds of thing, operating at different times.
+
+- A **plugin** is a **boot-time wiring mechanism**. Its `register()` method runs **once**, when the framework boots, and contributes things to the core's seams — config defaults, DI services, event listeners, routes, console commands, database drivers, HTTP clients, **and middleware**. Think of it as the *setup step* that installs capabilities.
+- A **middleware** is a **per-request pipeline stage**. It's a PSR-15 object that runs on **every request**, getting a turn to act on the request on the way in and the response on the way out. Think of it as a *worker on the assembly line* each request passes down.
+
+|  | Plugin | Middleware |
+|---|---|---|
+| **When it runs** | Once, at boot | On every request |
+| **What it is** | A registration hook (`PluginInterface::register()`) | A request/response processing stage (PSR-15) |
+| **Its job** | Wire capabilities into the framework's seams | Do one thing to each request as it flows through |
+| **How you activate it** | List its class in `Config/plugins.*` | It's in the pipeline via a `#[Middleware]` attribute or a `Config/middleware.*` entry |
+| **Runs your code per request?** | No — only its contributions do | Yes |
+
+The relationship is one-directional: **a plugin can register middleware (among many other contributions), but middleware is not a plugin.** You can add middleware with no plugin at all — a `Config/middleware.*` entry or the `#[Middleware]` attribute is enough (see [Writing custom middleware](/advanced/custom-middleware/)). And a plugin usually does much more than add middleware — the `db-doctrine` plugin, for instance, registers a database driver and no middleware at all.
+
+So reach for a **plugin** when you're packaging a capability to drop into an app (often a whole subsystem); reach for **middleware** when you specifically need to see or change every request as it passes through the pipeline. The [middleware pipeline](/architecture/middleware-pipeline/) covers the request side; [Plugins and extensibility](/architecture/plugins/) covers the boot-time side.
 
 ## Why extract them
 
@@ -93,6 +120,19 @@ The `quioteframework/*` packages now live in their own GitHub repositories, but 
 
 The plain `composer require quioteframework/…` lines throughout these docs describe the eventual Packagist experience.
 </Aside>
+
+## How a plugin reaches a request
+
+Enabling a plugin doesn't run any request code by itself — there are two distinct moments. First the framework **boots** and lets each plugin contribute to the core's seams; then, per request, those contributions are simply *there* in the pipeline the kernel already assembled. The path from a `plugins` entry to a live request is:
+
+1. **Boot & discover.** `Quiote::bootstrap()` loads your `settings.*`, then `PluginManager` reads the `plugins` config key, instantiates each enabled plugin (refusing any class-string that lacks the `#[Plugin]` attribute), and calls its `register(PluginRegistrar $r)` **once**, in declared order.
+2. **Contribute.** Inside `register()`, each `PluginRegistrar` method routes a contribution to an existing seam — config defaults to `Config` (set-if-absent), services to the DI `Container`, middleware to `MiddlewareCatalog`, listeners to `Events`, and routes / commands / HTTP clients to their registries.
+3. **Assemble.** The kernel builds the pipeline once: a scanner reads the `#[Middleware]` attributes, a topological resolver orders them by phase → `before`/`after` → priority, and any middleware added via `MiddlewareCatalog::register()` is spliced in at its requested position.
+4. **Serve.** Every request then flows through that assembled pipeline:
+
+> Kernel boots and builds the pipeline → request enters `ErrorHandlingMiddleware` → `SessionMiddleware` → `RoutingMiddleware` resolves the action → `SecurityMiddleware` checks access → `DispatchMiddleware` runs the action and renders the view → response is emitted.
+
+A plugin that contributes **middleware** shows up as a station in that chain. A plugin that only contributes a **config default** or a **service** doesn't add a station — it shows up as a value that an action or an existing middleware reads while the request runs. For the complete picture see [The request lifecycle](/architecture/request-lifecycle/) and [The middleware pipeline](/architecture/middleware-pipeline/).
 
 ## See also
 

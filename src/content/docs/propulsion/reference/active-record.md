@@ -277,7 +277,7 @@ As for one-to-many relationships, you can customize the phpName used to forge th
 
 ```xml
 <table name="book">
-  <foreign-key foreignTable="author" refName="Publication">
+  <foreign-key foreignTable="author" refPhpName="Publication">
     <reference local="author_id" foreign="id" />
   </foreign-key>
 </table>
@@ -386,13 +386,13 @@ $book->setStyle('novel');
 echo $book->getStyle(); // novel
 // An enum is stored as a TINYINT in the database
 
-// Each value in an ENUM column has a related constant in the TableMap class
+// Each value in an ENUM column has a related constant in the Peer class
 // Your IDE with code completion should love this
-echo BookTableMap::STYLE_NOVEL;  // 'novel'
-echo BookTableMap::STYLE_ESSAY;  // 'essay'
-echo BookTableMap::STYLE_POETRY; // 'poetry'
-// The TableMap class also gives access to the list of available values
-print_r(BookTableMap::getValueSet(BookTableMap::STYLE)); // array('novel', 'essay', 'poetry')
+echo BookPeer::STYLE_NOVEL;  // 'novel'
+echo BookPeer::STYLE_ESSAY;  // 'essay'
+echo BookPeer::STYLE_POETRY; // 'poetry'
+// The Peer class also gives access to the list of available values
+print_r(BookPeer::getValueSet(BookPeer::STYLE)); // array('novel', 'essay', 'poetry')
 ```
 
 ### OBJECT columns
@@ -471,8 +471,8 @@ $book->setByName('Title', 'War and Peace');
 echo $book->getByName('Title'); // War and Peace
 // The name used is the column phpName - the same name used in generated getters and setters.
 // You can also use the table column name by adding a converter argument
-$book->setByName('title', 'War and Peace', BookTableMap::TYPE_FIELDNAME);
-echo $book->getByName('title', BookTableMap::TYPE_FIELDNAME); // War and Peace
+$book->setByName('title', 'War and Peace', BookPeer::TYPE_FIELDNAME);
+echo $book->getByName('title', BookPeer::TYPE_FIELDNAME); // War and Peace
 
 // Each Active Record class also offers generic getter and setter by position
 $book->setByPosition(2, 'War and Peace'); // 'title' is the second column of the table
@@ -496,7 +496,7 @@ print_r($book->toArray());
 // )
 
 // As with getByName() and setByName(), you can use the table column names by adding a converter argument
-print_r($book->toArray(BookTableMap::TYPE_FIELDNAME));
+print_r($book->toArray(BookPeer::TYPE_FIELDNAME));
 // array(
 //  'id'        => null
 //  'title'     => 'War and Peace',
@@ -508,8 +508,9 @@ print_r($book->toArray(BookTableMap::TYPE_FIELDNAME));
 // To exclude them, set the second argument to false.
 
 // If the class has related objects, they are not included by default in the output of toArray().
-// To include them, set the third argument to true.
-print_r($book->toArray($keyType = BaseTableMap::TYPE_PHPNAME, $includeLazyLoadColumns = true, $includeForeignObjects = true));
+// To include them, set the fourth argument to true (the third argument is an internal
+// recursion guard used when dumping related objects, and should normally be left at its default).
+print_r($book->toArray($keyType = BasePeer::TYPE_PHPNAME, $includeLazyLoadColumns = true, $alreadyDumpedObjects = array(), $includeForeignObjects = true));
 // array(
 //  'Id'       => null
 //  'Title'    => 'War and Peace',
@@ -537,7 +538,7 @@ return [
 
 ## Validation
 
-Active Record classes for tables using the validate behavior have three additional methods: `validate()`, `getValidationFailures()` and `loadValidatorMetadata()`.
+Active Record classes have two additional methods, `validate()` and `getValidationFailures()`, when the `propulsion.addValidateMethod` build property is enabled (see the [configuration file reference](/propulsion/reference/configuration-file/)).
 
 ```php
 <?php
@@ -548,9 +549,9 @@ if ($book->validate()) {
   $book->save();
 } else {
   // Something went wrong.
-  // Use the validationFailures to check what
-  foreach ($book->getValidationFailures() as $failure) {
-    echo $failure->getMessage() . "\n";
+  // getValidationFailures() returns Propulsion\Validator\ValidationFailed objects keyed by column name
+  foreach ($book->getValidationFailures() as $column => $failure) {
+    echo $column . ': ' . $failure->getMessage() . "\n";
   }
 }
 ```
@@ -654,9 +655,9 @@ $book = BookQuery::create()
   ->filterByTitle('War and Peace')
   ->join('Book.Author')
   ->withColumn('Author.LastName', 'AuthorName')
-  ->find();
-echo $author->getVirtualColumn('AuthorName'); // Tolstoi
-echo $author->getAuthorName(); // Tolstoi
+  ->findOne();
+echo $book->getVirtualColumn('AuthorName'); // Tolstoi
+echo $book->getAuthorName(); // Tolstoi
 ```
 
 See the [Model/Query reference](/propulsion/reference/model-criteria/) for more details.
@@ -713,7 +714,7 @@ $book->delete();
 echo $book->isDeleted(); // true
 
 // You can test and list the modified columns using isColumnModified() and getModifiedColumns()
-// The function uses fully qualified column names (i.e. of type BaseTableMap::TYPE_COLNAME)
+// The function uses fully qualified column names (i.e. of type BasePeer::TYPE_COLNAME)
 $book = new Book();
 $book->setTitle('War and Peace');
 echo $book->isColumnModified('book.ISBN'); // false
@@ -721,7 +722,7 @@ echo $book->isColumnModified('book.TITLE'); // true
 print_r($book->getModifiedColumns());
 // array('book.TITLE')
 // To use column phpNames, just convert the parameter using translateFieldName()
-$colName = BookTableMap::translateFieldName('Title', TableMap::TYPE_PHPNAME, TableMap::TYPE_COLNAME);
+$colName = BookPeer::translateFieldName('Title', BasePeer::TYPE_PHPNAME, BasePeer::TYPE_COLNAME);
 echo $book->isColumnModified($colname); // true
 ```
 

@@ -5,11 +5,22 @@ description: Exports, logical operator groups, and custom validators with the fl
 
 The [Validation](/basics/validation/) page covers per-field validators and reading validated input. This page covers the parts you reach for in real forms: **exports** (making a sanitized value available to the action), **operator groups** (and/or/xor/not), and **custom validators**.
 
+## Where these rules live
+
+The fluent examples on this page are the body of a per-action validator file — `Modules/{Module}/Validate/{Action}.php`, which returns a callable that receives a `ValidatorBuilder`. The action loads it automatically through its `registerValidators()` hook; there is no separate registration step. (You can also register the same rules imperatively from an action method — see [Per-method validator sets](#per-method-validator-sets) below.)
+
+Wherever they are declared, the rules don't run inline. The framework compiles them and executes them in **`ValidationMiddleware`**, which sits just before your action in the pipeline:
+
+> `SecurityMiddleware` checks access → `ValidationMiddleware` runs the compiled validators and prunes unvalidated parameters → `DispatchMiddleware` runs the action, which reads the validated (and exported) values.
+
+See [The middleware pipeline](/architecture/middleware-pipeline/) for the full ordering and [Writing a custom validator](/advanced/custom-validators/) for the file format and the `Validator` base class.
+
 ## Exports: sanitized values into parameters
 
 A validator does more than accept or reject — it can *sanitize and cast* a value, then make that cleaned value the one the action reads. That is what `export` does: it copies the validator's processed value into a runtime parameter.
 
 ```php
+// Modules/{Module}/Validate/{Action}.php
 return static function (ValidatorBuilder $v): void {
     $v->number('age', required: true)
         ->castTo('int')

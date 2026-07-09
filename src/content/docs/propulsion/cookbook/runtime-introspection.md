@@ -9,11 +9,11 @@ Besides the Object Model classes used for CRUD operations, Propulsion generates 
 
 The starting point for runtime introspection is usually a table map — an object that carries every property of a table as defined in `schema.xml`, made accessible at runtime.
 
-Retrieve the table map for a table using the `getTableMap()` static method of the related `TableMap` class. For instance, to retrieve the table map for the `book` table:
+Retrieve the table map for a table using the `getTableMap()` static method of the related `Peer` class. For instance, to retrieve the table map for the `book` table:
 
 ```php
 <?php
-$bookTable = BookTableMap::getTableMap();
+$bookTable = BookPeer::getTableMap();
 ```
 
 ## TableMap properties

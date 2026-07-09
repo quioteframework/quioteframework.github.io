@@ -27,7 +27,7 @@ $books = BookQuery::create()
     ->findOne();
 ```
 
-The first time Propulsion executes the termination method, it computes the SQL translation of the query object and stores it in a cache backend (APCu by default). The next time you run the same query, it executes faster, even with different parameters:
+The first time Propulsion executes the termination method, it computes the SQL translation of the query object and stores it in a cache backend (APC by default). The next time you run the same query, it executes faster, even with different parameters:
 
 ```php
 $title = 'Anna Karenina';

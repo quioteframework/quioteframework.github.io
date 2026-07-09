@@ -128,18 +128,18 @@ $book->setIsbn('0553213105');
 $book->save(); // book is saved, and a new version is created
 ```
 
-Alternatively, disable automatic version creation on every save, for all objects of a given model, by calling `disableVersioning()` on the query class. You still have the ability to manually create a new version of an object using `addVersion()` on a saved object:
+Alternatively, disable automatic version creation on every save, for all objects of a given model, by calling `disableVersioning()` on the peer class. You still have the ability to manually create a new version of an object using `addVersion()` on a saved object:
 
 ```php
-BookQuery::disableVersioning();
+BookPeer::disableVersioning();
 $book = new Book();
 $book->setTitle('Pride and Prejudice');
 $book->setVersion(1);
 $book->save();       // book is saved, no new version is created
 $book->addVersion(); // a new version is created
 
-// you can re-enable versioning using the query static method enableVersioning()
-BookQuery::enableVersioning();
+// you can re-enable versioning using the peer static method enableVersioning()
+BookPeer::enableVersioning();
 ```
 
 ## Versioning related objects
@@ -228,7 +228,7 @@ The audit log abilities need to be enabled in the schema as well:
 </table>
 ```
 
-Sometimes it's necessary to have indexes from the origin table also present in the version table, e.g. to run queries against it. You can either fully describe `<tableName>_version` in your schema with all its necessary indexes (so the behavior won't overwrite/re-add it), or use the `indices` parameter:
+Sometimes it's necessary to have indexes from the origin table also present in the version table, e.g. to run queries against it. Fully describe `<tableName>_version` in your schema with all its necessary indexes, so the behavior won't overwrite/re-add it:
 
 ```xml
 <table name="book">
@@ -237,9 +237,7 @@ Sometimes it's necessary to have indexes from the origin table also present in t
   <index>
     <index-column name="title" />
   </index>
-  <behavior name="versionable">
-    <parameter name="indices" value="true" />
-  </behavior>
+  <behavior name="versionable" />
 </table>
 ```
 
@@ -254,7 +252,7 @@ Sometimes it's necessary to have indexes from the origin table also present in t
 * `int getLastVersionNumber(PropulsionPDO $con)`: Queries the database for the highest version number recorded for this object.
 * `bool isLastVersion()`: Returns `true` if the current object is the latest available version.
 * `Version addVersion(PropulsionPDO $con)`: Creates a new `Version` record and saves it — used when `isVersioningNecessary()` is `false`. Doesn't increment the main object's version number, and the main object must be saved prior to calling this method.
-* `array getAllVersions(PropulsionPDO $con)`: Returns all `Version` objects related to the main object, in a collection.
+* `PropulsionObjectCollection getAllVersions(PropulsionPDO $con)`: Returns all `Version` objects related to the main object, in a collection.
 * `Version getOneVersion(int $versionNumber, PropulsionPDO $con)`: Returns a given version object.
 * `array compareVersions(int $version1, int $version2)`: Returns an array of differences showing which parts of a resource changed between two versions.
 * `BaseObject populateFromVersion(Version $version, PropulsionPDO $con)`: Populates an ActiveRecord object based on a `Version` object.
@@ -264,7 +262,7 @@ Sometimes it's necessary to have indexes from the origin table also present in t
 * `BaseObject setVersionComment(string $comment)`: Defines the comment for the revision.
 * `string getVersionComment()`: Gets the comment for the revision.
 
-### Query static methods
+### Peer static methods
 
 * `void enableVersioning()`: Enables versioning for all instances of the related ActiveRecord class.
 * `void disableVersioning()`: Disables versioning for all instances of the related ActiveRecord class.

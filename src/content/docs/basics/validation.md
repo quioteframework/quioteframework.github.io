@@ -7,14 +7,23 @@ Quiote validates input *before* the action runs, and enforces a strict rule afte
 
 Validation runs in `ValidationMiddleware`, after security and before dispatch. This page covers the common cases; operator groups, exports, and custom validators are in [Advanced validation](/advanced/advanced-validation/).
 
+## How it fits in a request
+
+Validation is not something you call — it is a middleware the kernel wires into the request pipeline for you. At boot, the `MiddlewareAttributeScanner` scans middleware classes for `#[Middleware]` attributes and the `MiddlewareOrderResolver` orders them topologically. `ValidationMiddleware` declares that it runs `after: SecurityMiddleware` and `before: DispatchMiddleware`, which fixes its place in the chain:
+
+> Kernel boots and builds the pipeline → request enters → `RoutingMiddleware` resolves the action → `SecurityMiddleware` checks access → `ValidationMiddleware` runs the action's validators, then prunes any parameter no validator approved → `DispatchMiddleware` runs the action and renders the view.
+
+So by the time your `execute*()` code runs, input has already been checked and unvalidated parameters are gone. For the full pipeline see [Request lifecycle](/architecture/request-lifecycle/) and [Middleware pipeline](/architecture/middleware-pipeline/).
+
 ## The fluent builder
 
 The modern way to declare validators is the fluent PHP builder, `Quiote\Validator\Compiler\Runtime\ValidatorBuilder`. You declare validators for an action by overriding `registerValidators()` (or a per-method variant) on the action, or by placing a validator file in the module's `Validate/` directory that returns a closure over the builder.
 
-A validator file looks like this:
+A validator file lives next to the action it guards, at `Modules/<Module>/Validate/<Action>.php`, and returns a closure over the builder:
 
 ```php
 <?php
+// Modules/Blog/Validate/Post.php
 
 use Quiote\Validator\Compiler\Runtime\ValidatorBuilder;
 
@@ -111,7 +120,7 @@ Reading a parameter that no validator approved throws `UnvalidatedParameterAcces
 
 ## The strict lockdown
 
-For a non-simple action with **no validator configuration at all**, `ValidationMiddleware` clears every parameter before the action runs — and, deny-by-default, every header, cookie, and uploaded file too, not just query/body parameters. Headers are exactly as attacker-controlled as any other request input; an action with zero validators of any kind gets none of them. The action sees no input rather than unvalidated input. To let an action read a parameter, header, cookie, or file, declare a validator scoped to that source (see [Advanced validation](/advanced/advanced-validation/) for non-`parameters` sources).
+For a non-simple action with **no validator configuration at all**, `ValidationMiddleware` clears every request parameter before the action runs — query parameters, the parsed body, and any promoted route parameters — via `WebRequest::clearParameters()`. The action sees no parameter input rather than unvalidated input: to let it read a parameter, declare a validator for that parameter's name (see [Advanced validation](/advanced/advanced-validation/)). This clearing applies to the parameter store only; headers, cookies, and uploaded files are not wiped by the lockdown, so treat those as unvalidated input and read them defensively.
 
 Actions that genuinely take no input — a static page, say — can mark themselves simple:
 
@@ -132,7 +141,7 @@ When validation *fails* — a validator or `validate()` returns `false`/reports 
 2. Renders it in the negotiated output type with HTTP 400.
 3. For JSON, returns an [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457) problem document (`application/problem+json`) instead of an HTML page.
 
-On an HTML form submission, `FormPopulationMiddleware` also repopulates the submitted values into the re-rendered form — see [Sticky forms after a partial validation failure](#sticky-forms-after-a-partial-validation-failure) below for how that survives strict pruning.
+On an HTML form submission, the submitted values are repopulated into the re-rendered error form — see [Sticky forms after a partial validation failure](#sticky-forms-after-a-partial-validation-failure) below for how that survives strict pruning.
 
 :::caution[A throwing validator is a 500, not a 400]
 A validator (or a manual `validate*()` hook) that **throws** is not treated as "the user submitted something invalid" — it's logged at error level and rethrown, reaching `ErrorHandlingMiddleware` and becoming a 500 (see [Error handling](/architecture/error-handling/)), not a graceful 400. A validator crashing is a framework/app bug; conflating it with an ordinary validation failure would also skip the pruning that normally scrubs unvalidated data before the exception is caught. Return `false` (or use the validator's own failure mechanism) for an expected validation failure — reserve exceptions for genuinely unexpected errors.
@@ -142,7 +151,7 @@ A validator (or a manual `validate*()` hook) that **throws** is not treated as "
 
 Strict pruning has one legitimate-UX cost: if a field has two validators (say, length and not-numeric) and a submitted value passes one and fails the other, the field's value is scrubbed from the request entirely — even though the field name stays whitelisted — because `getParameter()` must never return a partially-invalid value. That's correct for business logic, but it means a re-rendered HTML form would lose exactly the value the user needs to see to fix their mistake.
 
-`ValidationManager::getRawParameterSnapshot()` captures query and body parameters *before* any pruning happens, held on the validation manager itself — deliberately **not** on `WebRequest`, so it is not reachable via `getParameter()`/`getParameters()` and can't be mistaken for a validated read. `FormPopulationMiddleware`'s HTML error-view path uses this snapshot to redisplay the submitted value, scoped to `html` output only — a JSON/API client is expected to hold its own state rather than have the framework redisplay it.
+`ValidationManager::getRawParameterSnapshot()` captures query and body parameters *before* any pruning happens, held on the validation manager itself — deliberately **not** on `WebRequest`, so it is not reachable via `getParameter()`/`getParameters()` and can't be mistaken for a validated read. On a validation failure, `ValidationMiddleware` itself drives the sticky-form repopulation inline (via `FormPopulationEngine`) using this snapshot, scoped to `html` output only — a JSON/API client is expected to hold its own state rather than have the framework redisplay it. (This is distinct from `FormPopulationMiddleware`, which runs in `after_action` for the normal response flow.)
 
 ## Manual validation
 

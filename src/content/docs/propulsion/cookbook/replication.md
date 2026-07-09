@@ -8,38 +8,40 @@ Propulsion can be used in a master-slave replication environment. These setups i
 ## Configuring Propulsion for replication
 
 * Set up a replication environment at the database level (see [Databases](#databases) below).
-* Add a `slaves` section to the relevant connection under `propulsion.database.connections` in your configuration.
+* Add a `slaves` section to the relevant datasource in your runtime configuration file (the `<project>-conf.php` file Propulsion loads at startup), next to its `connection` section.
 * Verify the setup by checking the master's query log — it should stop receiving `SELECT ...` statements once reads are routed to slaves.
 
-The `slaves` section lives inside a master *connection* and contains one or more nested `dsn` entries. The following example configures "localhost" as the master, with "slave-server1" and "slave-server2" as slaves:
+The `slaves` section lives inside a datasource, alongside its master `connection` section, and holds a nested `connection` entry — or, for several slaves, an array of them. The following example configures "localhost" as the master, with "slave-server1" and "slave-server2" as slaves:
 
 ```php
 <?php
-// build.php
+// bookstore-conf.php
 return [
-    'propulsion.database.connections' => [
+    'datasources' => [
+        'default'   => 'bookstore',
         'bookstore' => [
-            'adapter'   => 'mysql',
-            'classname' => 'Propulsion\Runtime\Connection\ConnectionWrapper',
-            'dsn'       => 'mysql:host=localhost;dbname=bookstore',
-            'user'      => 'my_db_user',
-            'password'  => 's3cr3t',
+            'adapter' => 'mysql',
+            'connection' => [
+                'dsn'      => 'mysql:host=localhost;dbname=bookstore',
+                'user'     => 'my_db_user',
+                'password' => 's3cr3t',
+            ],
             'slaves' => [
-                ['dsn' => 'mysql:host=slave-server1;dbname=bookstore'],
-                ['dsn' => 'mysql:host=slave-server2;dbname=bookstore'],
+                'connection' => [
+                    ['dsn' => 'mysql:host=slave-server1;dbname=bookstore', 'user' => 'my_db_user', 'password' => 's3cr3t'],
+                    ['dsn' => 'mysql:host=slave-server2;dbname=bookstore', 'user' => 'my_db_user', 'password' => 's3cr3t'],
+                ],
             ],
         ],
     ],
-    'propulsion.runtime.defaultConnection'   => 'bookstore',
-    'propulsion.runtime.connections'         => ['bookstore'],
-    'propulsion.generator.defaultConnection' => 'bookstore',
-    'propulsion.generator.connections'       => ['bookstore'],
 ];
 ```
 
+The optional `classname` connection setting lets you swap in your own PDO subclass; when omitted, Propulsion defaults to its own `PropulsionPDO` class.
+
 ## Implementation
 
-Replication is implemented in Propulsion's connection configuration/initialization code, and in the generated `TableMap` and Object classes that call into it.
+Replication is implemented in Propulsion's connection configuration/initialization code, and in the generated Query (`ModelCriteria`) and Peer classes that call into it.
 
 ### `Propulsion::getReadConnection()` and `Propulsion::getWriteConnection()`
 

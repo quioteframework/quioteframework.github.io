@@ -7,9 +7,19 @@ import { Tabs, TabItem } from '@astrojs/starlight/components';
 
 Every exception thrown anywhere in a request is caught in one place: `ErrorHandlingMiddleware`, the outermost middleware in the pipeline. Because it wraps the entire stack, there is a single, predictable path from "something threw" to "a response went out" — no scattered try/catch, no partial output. This page traces that path and shows how to shape or replace what the user sees.
 
+## How it fits in a request
+
+The kernel builds the pipeline by scanning `#[Middleware]` attributes (`MiddlewareAttributeScanner`) and ordering them with a topological sort (`MiddlewareOrderResolver`) — first by phase, then by priority, where a *higher* priority runs further **outward**. `ErrorHandlingMiddleware` carries `#[Middleware(phase: 'bootstrap', priority: 1000)]` — the highest priority in the outermost phase — so it becomes the outermost wrapper around everything else.
+
+A request therefore travels like this:
+
+> Kernel boots and orders the pipeline → request enters **`ErrorHandlingMiddleware`** (outermost) → `TelemetryMiddleware` → … → `RoutingMiddleware` resolves the action → `DispatchMiddleware` runs it and renders the view → response travels back out → emitted.
+
+If anything downstream throws, the stack unwinds back up to `ErrorHandlingMiddleware`'s single `try/catch`, which turns the throwable into a response. For the whole pipeline see [The middleware pipeline](/architecture/middleware-pipeline/) and [The request lifecycle](/architecture/request-lifecycle/).
+
 ## The flow
 
-`ErrorHandlingMiddleware` sits at the very top of the [pipeline](/architecture/middleware-pipeline/) (phase `bootstrap`, highest priority), so it is the last thing to see the request on the way in and the first to catch anything on the way out. When a `Throwable` escapes the stack it:
+Because it sits at the very top of the [pipeline](/architecture/middleware-pipeline/) (phase `bootstrap`, highest priority), `ErrorHandlingMiddleware` is the last thing to see the request on the way in and the first to catch anything on the way out. When a `Throwable` escapes the stack it:
 
 1. Logs a dense diagnostic line — exception class, message, `file:line`, request method and URI, allowed methods (for a method-not-allowed error), the `caused by` previous-exception chain, and the trace.
 2. Emits an **`ExceptionCaughtEvent`** carrying the throwable and the request, so listeners can report the error (Sentry, Bugsnag, metrics) uniformly. See [Events](/architecture/events/).

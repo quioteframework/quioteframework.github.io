@@ -32,7 +32,7 @@ var_export($bcopy->getAuthor() == $b->getAuthor());     // true
 
 ## Deep copies
 
-Calling `copy(true)` makes Propulsion create a deep copy of the object — related objects are copied as well, rather than shared by reference.
+Calling `copy(true)` makes Propulsion create a deep copy of the object. "Deep" here specifically means the objects that reference *this* row through a foreign key (its fkey referrers, e.g. a `Book`'s `Review` rows) are copied too, rather than shared by reference — it does **not** mean the row's own foreign key columns get new related objects. A `Book`'s `author_id`/`publisher_id` columns are copied verbatim by `copyInto()` regardless of `$deepCopy`, so the copy still points at the same `Author`/`Publisher` row either way.
 
 Continuing the example above:
 
@@ -41,6 +41,6 @@ Continuing the example above:
 
 $bdeep = $b->copy(true);
 var_export($bdeep->getId() == $b->getId());             // false
-var_export($bdeep->getAuthorId() == $b->getAuthorId());       // false
-var_export($bdeep->getAuthor() == $b->getAuthor());           // false
+var_export($bdeep->getAuthorId() == $b->getAuthorId());       // true
+var_export($bdeep->getAuthor() == $b->getAuthor());           // true
 ```

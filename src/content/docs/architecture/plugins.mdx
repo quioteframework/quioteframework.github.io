@@ -9,6 +9,10 @@ Quiote's core is deliberately [unopinionated](/getting-started/philosophy/). The
 
 A plugin adds **no new low-level mechanism**. Every contribution routes to a seam that already exists — [config](/architecture/configuration/) defaults, [DI](/architecture/container/) services, [middleware](/architecture/middleware-pipeline/), [events](/architecture/events/), routes/modules, commands, and [HTTP clients](/basics/http-client/). The plugin system just wraps those seams in one coherent, discoverable API.
 
+:::note[Plugin vs. middleware]
+A plugin runs its `register()` **once at boot** to wire capabilities in; a middleware runs **on every request** as a stage of the pipeline. A plugin can *contribute* middleware (among much else), but they're not the same thing — and you can add middleware without a plugin. See [Plugin vs. middleware](/plugins/overview/#plugin-vs-middleware) for the full comparison.
+:::
+
 <Aside type="tip" title="This is how the framework itself is built">
 Plugins aren't just for your code — **many subsystems have been extracted from the kernel into their own `quioteframework/*` packages** (CSRF, rate limiting, the Whoops error page, the MCP server, OpenTelemetry, the telemetry dashboard, the Eloquent / Doctrine / Cycle / Propulsion adapters, template renderers, and session backends). Most ship a plugin like the ones described here; a few plug into a config-driven registry instead (renderers, database aliases). This page covers the mechanism and how to write your own; for the extracted packages and how to install them, see the [Plugins overview](/plugins/overview/) and [Official packages](/plugins/official-packages/).
 </Aside>
@@ -64,6 +68,18 @@ The check is **skipped** for `PluginManager::add(new HealthPlugin())` — passin
 | `databaseDriver($alias, $adapterClass)` | A database adapter alias | `DatabaseDriverRegistry` (see [Databases](/basics/databases/)) |
 | `developerExceptionRenderer($factory)` | The developer-mode exception renderer (set-if-absent) | `ExceptionRendererRegistry::setDeveloperRenderer()` |
 
+### How a plugin fits in a request
+
+A plugin does **not** run on every request — it runs **once at boot**, and its job is to wire contributions into seams the framework already uses. After that, requests flow through those contributions as if the framework had shipped them itself:
+
+1. **How the framework finds and runs it.** `PluginManager::bootFromConfig()` (called from `Quiote::bootstrap()`, after settings load) instantiates each activated plugin and calls its `register(PluginRegistrar)` exactly once. Each `PluginRegistrar` method hands its contribution to the matching registry — middleware to `MiddlewareCatalog`, services to the container, listeners to `Events`, routes to the module scanner, and so on.
+
+2. **The path a request then takes.** Nothing plugin-specific happens at request time:
+
+   > `Quiote::bootstrap()` calls each plugin's `register()` → contributions land in their registries → the middleware pipeline builds from the merged set → a request flows through that pipeline (`ErrorHandling` → … → `Routing` → `Security` → `Dispatch`) with the plugin's middleware, routes, and services participating like any other.
+
+So a plugin's middleware is ordered by the same [attribute/catalog rules](/architecture/middleware-pipeline/#how-the-order-is-decided) as everyone else's, its routes are matched by the normal scanner, and its services resolve from the same [container](/architecture/container/). There is no separate plugin runtime to reason about.
+
 ## Registering a plugin
 
 Two ways. **The correct, documented way** is a dedicated `Config/plugins.{xml,php,yaml,yml}` file (`Quiote\Config\PluginConfigHandler`) — a flat, ordered enable/disable list, resolved like any other config type (`.php` > `.yaml`/`.yml` > `.xml`):
@@ -118,7 +134,7 @@ PluginManager::add(App\Plugin\HealthPlugin::class);
 Quiote\Runtime\Kernel::create([/* ... */])->run();
 ```
 
-Either way, `register()` runs during `Quiote::bootstrap()` — **after settings load, before contexts are created** — in deterministic order (config order, then `add()` order), de-duplicated by class. A class-string reaching either path must carry `#[Plugin]` (see above) or it's silently refused.
+Either way, `register()` runs during `Quiote::bootstrap()` — **after settings load, before contexts are created** — in deterministic order: **programmatic `add()` calls first** (they happen before bootstrap), **then config order**. The list is de-duplicated by class, and the **first occurrence wins** (`PluginManager` stores each class with `??=`, so a later duplicate is ignored). A class-string reaching either path must carry `#[Plugin]` (see above) or it's silently refused.
 
 <Aside type="note" title="A settings.* `plugins` key happens to work — don't rely on it">
 `plugins.xml` and `PluginManager::add()` both ultimately land in the same `plugins` config key/registry, so a `<setting name="plugins">` entry (or a `'plugins' => [...]` line) inside `settings.*` happens to work too. That's an incidental consequence of the shared storage, not a supported interface — it's intentionally undocumented anywhere else, and the scaffolder and every example in this repo only ever write to `Config/plugins.*`. Use the dedicated file.

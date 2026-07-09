@@ -77,7 +77,7 @@ The `slug_pattern` parameter is the rule used to build the raw slug based on the
 ```php
 protected function createRawSlug(): string
 {
-    return '/posts/' . $this->getTitle();
+    return '/posts/' . $this->cleanupSlugPart($this->getTitle());
 }
 ```
 
@@ -88,9 +88,9 @@ The `replace_pattern` parameter is a regular expression matching all the charact
 The `separator` parameter is the character that separates the slug from the incremental index added in case of non-uniqueness. Set to `/`, it makes `Post` objects sharing the same title produce slugs like:
 
 ```
-'posts/hello-world'
-'posts/hello-world/1'
-'posts/hello-world/2'
+'/posts/hello-world'
+'/posts/hello-world/1'
+'/posts/hello-world/2'
 ...
 ```
 

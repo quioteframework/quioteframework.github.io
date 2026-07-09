@@ -96,7 +96,7 @@ Additional `QUIOTE_*` variables exist for finer control — APCu config caching 
 
 The Caddyfile declares the worker entrypoint and how many resident workers to run:
 
-```caddyfile
+```text
 {
     frankenphp {
         worker {
@@ -117,7 +117,12 @@ The Caddyfile declares the worker entrypoint and how many resident workers to ru
 
 ## Docker
 
-The framework ships a `Dockerfile` on top of `dunglas/frankenphp`. It installs the PHP extensions Quiote needs — **`intl`** (i18n formatters) and **`xsl`** (XSLT rendering and XML config transforms) — installs dependencies with `composer install --no-dev`, copies the Caddyfile, and runs FrankenPHP:
+The framework ships a `Dockerfile` on top of `dunglas/frankenphp`. In order, it:
+
+1. Starts `FROM dunglas/frankenphp`.
+2. Installs the PHP extensions Quiote needs — **`intl`** (i18n formatters) and **`xsl`** (XSLT rendering and XML config transforms).
+3. Installs dependencies with `composer install --no-dev`.
+4. Copies the `Caddyfile` and runs FrankenPHP.
 
 ```dockerfile
 FROM dunglas/frankenphp
@@ -136,15 +141,19 @@ EXPOSE 80
 CMD ["frankenphp", "run", "--config", "/etc/caddy/Caddyfile"]
 ```
 
-With the provided `docker-compose.yml`:
+To run it with the provided `docker-compose.yml`:
 
-```bash
-docker compose build
-docker compose up
-# the sample maps host 8080 -> container 80
-```
+1. Build the image:
+   ```bash
+   docker compose build
+   ```
+2. Start the stack (the sample maps host `8080` → container `80`):
+   ```bash
+   docker compose up
+   ```
+3. Visit `http://localhost:8080/`.
 
-Then visit `http://localhost:8080/`. The compose file mounts the app for live editing and adds an HTTP healthcheck; strip those for a production image.
+The compose file mounts the app for live editing and adds an HTTP healthcheck; strip both for a production image.
 
 ## Deploying without worker mode
 

@@ -14,7 +14,7 @@ The cookbook collects task-oriented recipes that don't fit neatly into the getti
 * [Working with advanced column types](/propulsion/cookbook/working-with-advanced-column-types/) — `blob`, `enum`, `object`, and `array` columns.
 * [Copying persisted objects](/propulsion/cookbook/copying-persisted-objects/) — shallow and deep copies with `copy()`.
 * [Model introspection at runtime](/propulsion/cookbook/runtime-introspection/) — inspect tables, columns, and relations via the map classes.
-* [Adding additional SQL files](/propulsion/cookbook/adding-additional-sql-files/) — run extra DDL alongside the generated `schema.sql`.
+* [Adding additional SQL files](/propulsion/cookbook/adding-additional-sql-files/) — run extra DDL alongside the generated SQL file.
 * [Replication](/propulsion/cookbook/replication/) — read/write connection splitting for master-slave setups.
 
 ## Extending Propulsion

@@ -5,11 +5,31 @@ description: How renderers, layouts, layers, and template variables produce a vi
 
 import { Tabs, TabItem } from '@astrojs/starlight/components';
 
-Once a view has decided what to show, a **renderer** turns a **template** into output. Quiote's default renderer runs plain PHP templates; layouts and layers let you compose a page from nested pieces. Nothing here is opinionated about your front end — the default is PHP files, and swapping in another renderer is a config change.
+Once an [action](/architecture/actions-and-views/) has run and its **view** has decided *what* to show, a **renderer** turns a **template** into the bytes of the response. This page covers that last leg: the renderer, the template it runs, and how layouts and layers compose a page from nested pieces.
+
+A few terms up front:
+
+- **Renderer** — the object that takes a template plus the view's data and produces output. Quiote's default runs plain PHP templates.
+- **Template** — the file the renderer runs (a `.php` file for the default renderer).
+- **Layout / layer** — a page is usually a *layout* built from one or more *layers* (an outer shell wrapping inner content), rather than a single template file.
+
+Nothing here is opinionated about your front end — the default is PHP files, and swapping in another renderer is a config change, not a code change.
+
+## How it fits in a request
+
+Rendering is the last real work in a request. It happens in the `action` phase of the [middleware pipeline](/architecture/middleware-pipeline/) — you never call the renderer yourself; the framework does, once your view has run.
+
+**How the framework finds the renderer and template.** Each [output type](/basics/output-types-and-content-negotiation/) (`html`, `json`, …) names a renderer in its `output_types` config. `OutputTypeConfigHandler` reads that config into an `OutputType`, and `OutputType::getRenderer()` instantiates the class you named (checking it extends `Quiote\Renderer\Renderer`). The template file is found *by name*: the action name plus the view name resolve to `Modules/<Module>/Templates/<Action><View>.php` (see [Template location](#template-location)).
+
+**The path a request takes through it:**
+
+> `DispatchMiddleware` runs the action through `ActionExecutor` → the action returns a view name → `ActionExecutor` resolves the view class and calls its `execute<OutputType>()` method (e.g. `executeHtml()`) → the view loads its layout and layers → each layer hands its template to the configured renderer → the rendered string is written to the PSR-7 response body.
+
+For the complete picture see [The request lifecycle](/architecture/request-lifecycle/) and [The middleware pipeline](/architecture/middleware-pipeline/).
 
 ## Renderers
 
-A renderer implements `Quiote\Renderer\Renderer`. The kernel ships only the plain-PHP renderer; the rest are opt-in [packages](/plugins/official-packages/#template-renderers) — install the package, then name its class in the output type:
+A renderer extends the abstract `Quiote\Renderer\Renderer` base class (its one required method is `render()`). The kernel ships only the plain-PHP renderer; the rest are opt-in [packages](/plugins/official-packages/#template-renderers) — install the package, then name its class in the output type:
 
 | Renderer | Templates | Ships in |
 |---|---|---|

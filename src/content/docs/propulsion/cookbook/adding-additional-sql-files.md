@@ -1,13 +1,13 @@
 ---
 title: Adding Additional SQL Files
-description: Have sql:exec run extra hand-written SQL alongside the generated schema.sql.
+description: Have sql:exec run extra hand-written SQL alongside the generated DDL file.
 ---
 
 You may want `sql:exec` to perform additional SQL operations beyond creating tables — adding views, stored procedures, triggers, or seed data. Rather than running extra SQL by hand every time you rebuild your object model, you can have Propulsion's generator do it for you.
 
 ## 1. Create the SQL DDL files
 
-Create any additional SQL files you want executed against the database, after the base `schema.sql` file is applied.
+Create any additional SQL files you want executed against the database, after the generated DDL file is applied.
 
 For example, to add a default value to a column using a SQL function unsupported directly in the schema format:
 
@@ -16,25 +16,15 @@ For example, to add a default value to a column using a SQL function unsupported
 ALTER TABLE my_table ALTER COLUMN my_column SET DEFAULT CURRENT_TIMESTAMP;
 ```
 
-Save this as `my_column-default.sql` in the same directory as the generated `schema.sql` file (usually `generated-sql/` in your project).
+Save this as `my_column-default.sql` in the same directory as the generated DDL file (usually `generated-sql/` in your project, where `sql:build` writes one `.sql` file per `<database name="...">`, e.g. `your-db-name.sql`).
 
-## 2. Tell Propulsion about the new file
+## 2. Tell `sql:exec` about the new file
 
-In that same directory, a `sqldb.map` file maps SQL DDL files to the database connection they should run against. After running the generator, you'll usually have a single entry that looks like:
-
-```
-schema.sql=your-db-name
-```
-
-Add the new file to this mapping (future builds preserve anything you add here). When you're done, the file looks like:
-
-```
-schema.sql=your-db-name
-my_column-default.sql=your-db-name
-```
-
-Now when you run `sql:exec`, the `my_column-default.sql` file is executed against the `your-db-name` connection right after `schema.sql`:
+`sql:exec` has no config file or mapping to edit — there is no `sqldb.map`-style mechanism in Propulsion. Instead, `sql-files` is a plain ordered argument list on the command itself: pass every `.sql` file you want executed, in the order they should run, along with the connection to run them against:
 
 ```bash
-php bin/propulsion sql:exec
+php bin/propulsion sql:exec generated-sql/your-db-name.sql my_column-default.sql \
+    --dsn="pgsql:host=localhost;dbname=mydb" --user=me --password=secret
 ```
+
+The generated file(s) and any hand-written extras all run over the single PDO connection given by `--dsn`/`--user`/`--password`, in the order listed on the command line.

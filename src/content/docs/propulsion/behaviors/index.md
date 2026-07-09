@@ -97,12 +97,13 @@ Propulsion bundles the following behaviors — see each page for usage details:
 * [sluggable](/propulsion/behaviors/sluggable/)
 * [sortable](/propulsion/behaviors/sortable/)
 * [timestampable](/propulsion/behaviors/timestampable/)
-* [validate](/propulsion/behaviors/validate/)
 * [versionable](/propulsion/behaviors/versionable/)
 
 Bundled behaviors require no further installation and work out of the box. `generator/default.php` in the Propulsion source registers each one under a `propulsion.behavior.<name>.class` key (e.g. `propulsion.behavior.timestampable.class` → `Propulsion\Generator\Behavior\TimestampableBehavior`) — cross-check that file if you need the exact class name for a behavior.
 
 Not covered here: `soft_delete` (deprecated upstream in favor of `archivable`), `concrete_inheritance` (documented alongside [Inheritance](/propulsion/basics/inheritance/) since it's as much an inheritance strategy as a behavior), and `alternative_coding_standards`.
+
+There is **no `validate` behavior** in Propulsion. (The Symfony-Validator-based `validate` behavior is a Propel 2 feature; Propulsion is a Propel 1 fork.) Column validation instead uses Propel 1-style core `<validator>`/`<rule>` declarations in `schema.xml` — a core schema feature rather than a behavior. See [Validators](/propulsion/basics/validators/).
 
 ## Customizing behaviors
 

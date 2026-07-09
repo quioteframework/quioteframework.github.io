@@ -111,7 +111,13 @@ av:<moduleVersion>:<moduleActionVersion>:<module>:<action>:<outputType>[:u:<fing
 
 The user fingerprint is only added when the action's `isSecure()` returns `true`, so a public page shares one cache entry across everyone while a secure page gets a per-authentication-state entry. This is what keeps caching from serving one user's page to another. See [Authentication and authorization](/advanced/authentication-authorization/).
 
-`DispatchMiddleware` runs the whole read-cache / execute-on-miss / store cycle. On a hit it replays the stored view result without re-running the action; on a miss it executes, then stores with your TTL.
+### How it fits in a request
+
+The cache is consulted by `DispatchMiddleware`, the middleware that runs the action. The kernel discovers it like any other middleware (the `MiddlewareAttributeScanner` scans `#[Middleware]` attributes, the `MiddlewareOrderResolver` orders them); `DispatchMiddleware` sits in the `action` phase, after routing, security, and validation. Its cache logic:
+
+> `DispatchMiddleware` builds the cache key → looks it up in `ActionViewCache` → **hit:** replays the stored view result and skips the action entirely → **miss:** runs the action, renders the view, then stores the result with your TTL → response is emitted.
+
+The lookup only happens when both `core.cache_enabled` and `core.use_cache` are true and the action's `isCacheable()` returns `true`; otherwise the action always runs. For the full pipeline see [Request lifecycle](/architecture/request-lifecycle/) and [Middleware pipeline](/architecture/middleware-pipeline/).
 
 ### Invalidation
 

@@ -9,6 +9,18 @@ A **module** is the unit Quiote uses to group related actions, views, and templa
 
 Modules are pure convention: a directory with an expected shape and a namespace that matches. There is no module registry to edit and no build step to run — drop the files in the right place with the right names and the request resolves.
 
+## How a module fits in a request
+
+A module is not a pipeline stage of its own — it is *where the code lives* that the pipeline runs. The connection is made during dispatch:
+
+1. `RoutingMiddleware` resolves the request to a `_module` and `_action` (see [Routing](/basics/routing/)).
+2. When `DispatchMiddleware` runs the action, `ActionExecutor` calls `Controller::createActionInstance($module, $action)`, which builds the class name deterministically (`{namespace_prefix}\Modules\{Module}\Actions\{Action}Action`) and lets the autoloader find it.
+3. `ViewNameResolver` maps the same module + action + returned view name to the view class and template file.
+
+> `RoutingMiddleware` resolves `_module` / `_action` → `DispatchMiddleware` asks the `Controller` to instantiate the action class in that module → the action runs → `ViewNameResolver` locates the view and template in the same module → the response is rendered.
+
+Because the mapping is deterministic, there is nothing to register — matching names and directories are all that wire a module in. The rest of this page is those naming rules and the optional per-module config.
+
 ## Layout
 
 A module is a directory under your application's module directory (`core.module_dir`, `Modules/` by default). Its name is the module name, `PascalCase`:

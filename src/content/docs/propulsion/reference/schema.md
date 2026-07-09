@@ -3,7 +3,7 @@ title: Database schema reference
 description: The schema.xml element and attribute reference — <database>, <table>, <column>, <foreign-key>, <index>, <behavior>, column types, and vendor info.
 ---
 
-The schema for `schema.xml` contains a small number of elements with required and optional attributes. Propulsion's generator ships an XSD (`generator/resources/xsd/database.xsd`) that can be used to validate your `schema.xml` document, and the console automatically validates against it when you build your SQL and Object Model (unless `propulsion.schema.validate` is set to `false`).
+The schema for `schema.xml` contains a small number of elements with required and optional attributes. Propulsion's generator ships an XSD (`generator/resources/xsd/database.xsd`) that you can point an XML-aware editor at for autocompletion, but note that the build pipeline does not itself validate `schema.xml` against this XSD — `schema.xml` is parsed directly by a hand-written reader, so a malformed attribute is only caught if that reader happens to reject it.
 
 This format is essentially unchanged from Propel 1 — the differences called out on this page are the column types Propulsion dropped (`GEOMETRY`, `SET`, `UUID`, `UUID_BINARY`) and class-name renames (`Propel*` → `Propulsion*`) where they appear in attribute values.
 
@@ -68,7 +68,6 @@ Starting with the `<database>` element. The _attributes_ and _elements_ availabl
   [baseClass="/baseClassName/"]
   [defaultPhpNamingMethod="nochange|{underscore}|phpname|clean"]
   [heavyIndexing="true|false"]
-  [identifierQuoting="true|{false}"]
   [tablePrefix="/tablePrefix/"]
 >
   <table>
@@ -90,7 +89,6 @@ A `<database>` element may include an `<external-schema>` element, or multiple `
 * `baseClass` allows you to specify a default base class that all generated Propulsion objects should extend (in place of `Propulsion\OM\BaseObject`).
 * `defaultPhpNamingMethod` the default naming method to use for tables of this database. Defaults to `underscore`, which transforms table names into CamelCase phpNames.
 * `heavyIndexing` adds indexes for each component of the primary key (when using composite primary keys).
-* `identifierQuoting` quotes all identifiers (table name, column names) in DDL and SQL queries. This is necessary if you use reserved words as table or column name.
 * `tablePrefix` adds a prefix to all the SQL table names.
 
 ### table element
@@ -111,9 +109,8 @@ The `<table>` element is the most complicated of the usable elements. Its defini
   [baseClass = "/baseClassName/"]
   [description="/A text description of the table/"]
   [heavyIndexing = "true|false"]
-  [identifierQuoting = "true|{false}"]
   [readOnly = "true|false"]
-  [treeMode = "NestedSet|MaterializedPath|AdjacencyList"]
+  [treeMode = "NestedSet|MaterializedPath"]
   [reloadOnInsert = "true|false"]
   [reloadOnUpdate = "true|false"]
   [allowPkInsert = "true|false"]
@@ -148,9 +145,8 @@ According to the schema, `name` is the only required attribute. Also, the `idMet
 * `phpNamingMethod` the naming method to use. Defaults to `underscore`, which transforms the table name into a CamelCase phpName.
 * `baseClass` allows you to specify a class that the generated Propulsion objects should extend (in place of `Propulsion\OM\BaseObject`).
 * `heavyIndexing` adds indexes for each component of the primary key (when using composite primary keys).
-* `identifierQuoting` quotes all identifiers (table name, column names) in DDL and SQL queries. This is necessary if you use reserved words as table or column name.
 * `readOnly` suppresses the mutator/setter methods, `save()` and `delete()` methods.
-* `treeMode` indicates that this table is part of a node tree. Supported values are `NestedSet` (see [Behaviors: nested_set](/propulsion/behaviors/)), `MaterializedPath` (deprecated), and `AdjacencyList`.
+* `treeMode` indicates that this table is part of a node tree. Supported values are `NestedSet` (see [Behaviors: nested_set](/propulsion/behaviors/)) and `MaterializedPath` (deprecated).
 * `reloadOnInsert` indicates that the object should be reloaded from the database when an INSERT is performed. Useful if you have triggers (or other server-side functionality like column default expressions) that alters the database row on INSERT.
 * `reloadOnUpdate` indicates that the object should be reloaded from the database when an UPDATE is performed. Useful if you have triggers (or other server-side functionality) that alters the database row on UPDATE.
 * `allowPkInsert` can be used if you want to define the primary key of a new object being inserted. By default, if `idMethod` is `native`, Propulsion throws an exception. However, this is sometimes useful — e.g. replicating data in a master-master environment. Defaults to `false`.
@@ -161,7 +157,6 @@ According to the schema, `name` is the only required attribute. Also, the `idMet
 <column
   name = "/ColumnName/"
   [phpName = "/PHPColumnName/"]
-  [tableMapName = "/TABLEMAPNAME/"]
   [primaryKey = "true|{false}"]
   [required = "true|{false}"]
   [type = "BOOLEAN|TINYINT|SMALLINT|INTEGER|BIGINT|DOUBLE|FLOAT|REAL|DECIMAL|NUMERIC|CHAR|VARCHAR|LONGVARCHAR|DATE|TIME|TIMESTAMP|BLOB|CLOB|OBJECT|ARRAY|ENUM|BU_DATE|BU_TIMESTAMP|BOOLEAN_EMU|BINARY|VARBINARY|LONGVARBINARY"]
@@ -293,12 +288,12 @@ Here are the Propulsion column types with some example mappings to native databa
 |Propulsion type|Desc                   |Example Default DB Type (PostgreSQL)|Default PHP Native Type
 |-----------|-----------------------|-------------------------------|---------------------------
 |NUMERIC    |Numeric data           |NUMERIC                        |string (PHP int is limited)
-|DECIMAL    |Decimal data           |NUMERIC                        |string (PHP int is limited)
-|TINYINT    |Tiny integer           |SMALLINT                       |int
-|SMALLINT   |Small integer          |SMALLINT                       |int
+|DECIMAL    |Decimal data           |DECIMAL                        |string (PHP int is limited)
+|TINYINT    |Tiny integer           |INT2                           |int
+|SMALLINT   |Small integer          |INT2                           |int
 |INTEGER    |Integer                |INTEGER                        |int
-|BIGINT     |Large integer          |BIGINT                         |int
-|REAL       |Real number            |REAL                           |double
+|BIGINT     |Large integer          |INT8                           |int
+|REAL       |Real number            |FLOAT                          |double
 |FLOAT      |Floating point number  |DOUBLE PRECISION               |double
 |DOUBLE     |Floating point number  |DOUBLE PRECISION               |double
 
@@ -331,7 +326,7 @@ Here are the Propulsion column types with some example mappings to native databa
 
 * `BOOLEAN` columns map to a boolean in PHP. Depending on the native support for this type, they are stored in SQL as `BOOLEAN` or an emulated integer type.
 * `ENUM` columns accept values among a list of predefined ones. Set the value set using the `valueSet` attribute, separated by commas.
-* `OBJECT` columns map to PHP objects and are stored as binary.
+* `OBJECT` columns map to PHP objects and are stored as `serialize()`d text.
 * `ARRAY` columns map to PHP arrays and are stored as strings.
 
 Propel 1's `SET`, `GEOMETRY`, `UUID`, and `UUID_BINARY` column types are **not implemented in Propulsion** — they aren't in `Propulsion\Generator\Model\PropulsionTypes` or the schema XSD's type enumeration. If your Propel 1 schema uses any of them, see [UUID and binary columns](/propulsion/reference/uuid-binary-columns/) (for `UUID`/`UUID_BINARY`) or model the equivalent by hand (a plain `VARCHAR`/`CHAR` column for `SET`; a database-native geometry `sqlType` override with a `VARCHAR`/`BLOB` Propulsion type for `GEOMETRY`) before migrating that table.
@@ -367,7 +362,7 @@ For example:
 
 ### Adding vendor info
 
-Propulsion supports database-specific elements in the schema (currently only for MySQL). These "vendor" parameters affect the generated SQL. To add vendor data, add a `<vendor>` tag with a `type` attribute specifying the target database vendor. In the `<vendor>` tag, add `<parameter>` tags with a `name` and a `value` attribute. For instance:
+Propulsion supports database-specific elements in the schema (currently for MySQL, Oracle, and — for a single `schema` parameter — PostgreSQL; the MSSQL, SQLite, and SQL Server (sqlsrv) platforms parse `<vendor>` info into the model but don't act on it). These "vendor" parameters affect the generated SQL. To add vendor data, add a `<vendor>` tag with a `type` attribute specifying the target database vendor. In the `<vendor>` tag, add `<parameter>` tags with a `name` and a `value` attribute. For instance:
 
 ```xml
 <table name="book">
@@ -466,15 +461,16 @@ Tablespace       | L_128K
 
 #### PostgreSQL vendor info
 
-Propulsion supports the following vendor parameters for PostgreSQL (vendor type is `pgsql`):
+Propulsion supports the following vendor parameter for PostgreSQL (vendor type is `pgsql`):
 
 ```
 Name             | Example values
 -----------------|---------------
-// in <foreign-key> element
-deferrable       | true
-initiallyDeferred| false
+// in <table> element (or <database> element, applying to all tables)
+schema           | my_schema
 ```
+
+Setting `schema` emits a `CREATE SCHEMA` statement for that schema and qualifies the table name with it, in addition to (or instead of) the `<table schema="...">` attribute.
 
 ### Using a custom platform
 

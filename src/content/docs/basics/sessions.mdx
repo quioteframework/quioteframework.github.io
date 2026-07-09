@@ -20,7 +20,7 @@ Storage is a factory role (`storage`), so you pick the backend by pointing that 
 The scaffolded app uses `NullStorage`.
 
 :::danger[NullStorage means no session cookie, which means no working CSRF protection]
-With `NullStorage`, no session is ever persisted and no session cookie is ever sent — for the entire app, on every request. `CsrfValidationMiddleware` treats **any** request with no session cookie as exempt from CSRF checking (no ambient credential, nothing for an attacker to ride — see [Authentication & authorization: CSRF protection](/advanced/authentication-authorization/#automatic-exemptions--and-the-nullstorage-trap)). With `NullStorage` active, that exemption fires on *every* request, so CSRF validation never actually runs, even though the `_csrf_token` hidden field is still injected into every form and looks like it's doing something.
+With `NullStorage`, no session is ever persisted and no session cookie is ever sent — for the entire app, on every request. `CsrfValidationMiddleware` treats **any** request with no session cookie as exempt from CSRF checking (no ambient credential, nothing for an attacker to ride — see [Authentication & authorization: CSRF protection](/advanced/authentication-authorization/#automatic-exemptions--and-the-nullstorage-trap)). With `NullStorage` active, that exemption fires on *every* request, so CSRF validation never actually runs, even though the `_csrf_token` hidden field is still injected into every non-GET form and looks like it's doing something.
 
 If your app has any state-changing form or endpoint a browser session could be tricked into submitting, switch to `SessionStorage` or the PDO backend below **before** relying on CSRF protection. `NullStorage` is only correct for genuinely stateless apps/APIs, where there's no ambient session cookie for CSRF to protect in the first place.
 :::
@@ -79,7 +79,7 @@ storage:
     'class'  => \Quiote\Storage\Pdo\PdoSessionStorage::class,
     'params' => [
         'db_table' => 'session',   // required
-        'database' => 'default',   // connection name, defaults to "default"
+        'database' => 'default',   // connection name; omit to use the app's default connection
     ],
 ],
 ```
@@ -151,7 +151,17 @@ This is the same API the framework's own `User` classes use to persist authentic
 
 ## Session lifecycle
 
-`SessionMiddleware` drives the session, early in the pipeline (before security). On the way in it starts the session (mirroring the incoming cookie into place first); on the way out it writes and closes the session, then bridges any queued cookies onto the response. You rarely touch this directly — the important method for privilege transitions is regeneration:
+### How it fits in a request
+
+You never start or close the session yourself — `SessionMiddleware` does it. The kernel discovers it the same way as every other middleware (the `MiddlewareAttributeScanner` scans `#[Middleware]` attributes, the `MiddlewareOrderResolver` orders them); `SessionMiddleware` declares the `bootstrap` phase with a high priority, which places it early — before security — so storage is live before anything that depends on a user. Its path through a request:
+
+> Kernel boots and builds the pipeline → request enters → `SessionMiddleware` mirrors the incoming cookie into place and starts storage → `SecurityMiddleware` reads/writes the authenticated user via storage → the action runs → on the way out `SessionMiddleware` writes and closes the session, then bridges any queued cookies onto the response.
+
+For the full pipeline see [Request lifecycle](/architecture/request-lifecycle/) and [Middleware pipeline](/architecture/middleware-pipeline/).
+
+### Regenerating the session id
+
+On the way in `SessionMiddleware` starts the session (mirroring the incoming cookie into place first); on the way out it writes and closes it. You rarely touch this directly — the important method for privilege transitions is regeneration:
 
 ```php
 $storage->regenerate();   // new session id, keeps the data — call on login

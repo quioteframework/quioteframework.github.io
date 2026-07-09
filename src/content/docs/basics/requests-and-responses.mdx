@@ -5,7 +5,23 @@ description: The WebRequest and WebResponse API — parameters, cookies, headers
 
 import { Tabs, TabItem } from '@astrojs/starlight/components';
 
-Every action receives a `WebRequest` and, through the context, can shape a `WebResponse`. `WebRequest` **is** a real PSR-7 `ServerRequestInterface` (it composes Nyholm's `ServerRequest`), so anything that speaks PSR-7 works with it directly; on top of that it adds Quiote's parameter model and convenience getters. `WebResponse` is the framework's response object, which can carry and mirror a PSR-7 response.
+Every action receives a `WebRequest` — the incoming request — and, through the context, can shape a `WebResponse` — the outgoing response. This page is the API reference for both: reading input, mutating the request, and setting headers, cookies, status codes, and redirects.
+
+Two facts worth knowing up front:
+
+- `WebRequest` **is** a real PSR-7 `ServerRequestInterface` (it composes Nyholm's `ServerRequest`), so anything that speaks PSR-7 works with it directly. On top of that it adds Quiote's parameter model and convenience getters.
+- `WebResponse` is the framework's response object, which can carry and mirror a PSR-7 response.
+
+## How a request and response are built
+
+You rarely construct either object yourself — the framework builds them around your action:
+
+- **`WebRequest`** is built once per request by the kernel's `buildRequestFromGlobals()`: it uses Nyholm's `ServerRequestCreator::fromGlobals()`, applies reverse-proxy corrections (`X-Forwarded-*`, see [below](#forwarded-headers-and-trusted-hosts)), then wraps the result in the class named by your `request` factory role (`WebRequest` by default). Its **parameters** come from three places: the query string, the parsed body (`PayloadParsingMiddleware` decodes JSON and form bodies), and route placeholders (promoted by `ValidationMiddleware`).
+- **`WebResponse`** is created from your `response` factory role. Your view and middlewares write to it as the request travels the pipeline; at the end, `DispatchMiddleware` bridges it into the final Nyholm PSR-7 response — applying the output type's headers and adding `X-Content-Type-Options: nosniff` — which `HttpEmitter` sends to the client.
+
+> Kernel builds the `WebRequest` from globals → the pipeline runs → your action reads input and writes to the `WebResponse` → `DispatchMiddleware` bridges it to a PSR-7 response → `HttpEmitter` emits it.
+
+See [The request lifecycle](/architecture/request-lifecycle/) for the complete path.
 
 :::caution[WebRequest is immutable]
 Every `WebRequest` mutator — `setParameter()`, `appendParameter()`, `removeParameter()`, `declareParameter()`/`declareParameters()`, `enforceValidatedParameters()`, `clearParameters()`, `setAttribute()`, `appendAttribute()`, and every inherited PSR-7 `with*()` method — returns a **new** instance and leaves the original untouched, the same contract as the PSR-7 request it wraps. A discarded return value is a silent no-op, not an error: `$request->setParameter('total', $total);` compiles, runs, and does nothing. See [Mutating a request](#mutating-a-request) below before you write to one.
@@ -44,12 +60,12 @@ Related reads:
 | `getParameter($name, $default)` | A single value, with strict-access behaviour above. |
 
 :::note[The plural form enforces the same whitelist]
-`getParameters()`/`getAll()` are not a bulk escape hatch around `getParameter()`'s strict-access check: for the `null` (default), `'parameters'`, and `'runtime'` sources, the returned array is filtered down to whitelisted keys only, the same as calling `getParameter()` on each one individually. There is no way to read unvalidated query/body/runtime input from `WebRequest` other than the framework-internal raw snapshot covered in [Input validation](/basics/validation/#sticky-forms-after-a-partial-validation-failure).
+`getParameters()`/`getAll()` are not a bulk way around `getParameter()`'s strict-access check: for the `null` (default), `'parameters'`, and `'runtime'` sources, the returned array is filtered down to whitelisted keys only, the same as calling `getParameter()` on each one individually. There is no way to read unvalidated query/body/runtime input from `WebRequest` other than the framework-internal raw snapshot covered in [Input validation](/basics/validation/#sticky-forms-after-a-partial-validation-failure).
 :::
 
 ### JSON bodies
 
-For `write`/`update` requests with `Content-Type: application/json`, Quiote decodes the JSON body and mirrors its fields into the parameters automatically, so `getParameter('field')` reads a JSON field the same way it reads a form field. A missing, empty, or invalid JSON body raises an exception rather than silently yielding nothing.
+For a request with `Content-Type: application/json` (typically a `write`/`update`), `PayloadParsingMiddleware` decodes the JSON body and mirrors its fields into the parameters automatically, so `getParameter('field')` reads a JSON field the same way it reads a form field. An empty or malformed JSON body fails the request with a `400` response rather than silently yielding nothing (this strict parsing is the default; it can be relaxed with `QUIOTE_JSON_STRICT=0`).
 
 ### Cookies, headers, files
 
@@ -172,7 +188,7 @@ These correct `$_SERVER` (scheme, host, port) up front so the rest of the framew
 Quiote does not gate forwarded-header parsing on a trusted-proxy allowlist: if a request can reach the application directly, a client can spoof `X-Forwarded-Proto`/`Host`/`Port`. Deploy so that only your proxy can reach the app, and configure the proxy to overwrite (not append to) these headers on inbound requests.
 :::
 
-To defend against Host-header poisoning, set `core.trusted_hosts` — a list of exact hostnames and/or `/regex/` patterns. When set, a request whose Host matches none of them has its Host replaced with the first trusted host:
+To defend against Host-header poisoning, set `core.trusted_hosts` — a list of exact hostnames and/or `/regex/` patterns. When set, a request whose Host matches none of them has its Host replaced with the first *literal* (non-regex) entry in the list — so keep at least one plain hostname there, not only patterns:
 
 <Tabs syncKey="config-format">
 <TabItem label="PHP">

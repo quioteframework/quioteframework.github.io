@@ -3,9 +3,11 @@ title: The command-line tool
 description: The quiote CLI — scaffold an application, list routes, and inspect the environment.
 ---
 
-Quiote ships a command-line tool, `quiote`, built on Symfony Console. It currently does three things: scaffold a new application (`new`), list an app's routes (`routes:list`), and print framework/app info (`about`).
+Quiote ships a command-line tool, `quiote`, built on Symfony Console. Its built-in commands scaffold a new application (`new`), list an app's routes (`routes:list`), print framework/app info (`about`), and compile caches ahead of time (`routes:compile`, `cache:warmup`). Plugins can contribute more (see [Writing your own command](#writing-your-own-command)).
 
 ## Running it
+
+The CLI comes with the framework, so [install Quiote](/getting-started/installation/) first. Every command except `new` also needs an application to point at (see [Application-aware commands](#application-aware-commands) below); `new` runs anywhere because it only writes files.
 
 When Quiote is installed as a dependency, the binary is at `vendor/bin/quiote`. From a checkout of the framework itself it's `bin/quiote`.
 
@@ -24,23 +26,27 @@ vendor/bin/quiote --version
 | `new` | Scaffold a new Quiote application | No (writes files only) |
 | `routes:list` | List routes from the app's routing service | Yes |
 | `about` | Print framework and application info | Yes |
+| `routes:compile` | Compile route/module introspection data into `cache/introspection/app.json` | Yes |
+| `cache:warmup` | Compile and cache configuration ahead of time so workers start warm | Yes |
+
+The three most commonly used — `new`, `routes:list`, and `about` — are documented in detail below.
 
 ### Application-aware commands
 
-`routes:list` and `about` bootstrap a real application, so they need to find one. `new` does not — it only writes files and never boots the framework.
+Every command except `new` bootstraps a real application, so it needs to find one. `new` does not — it only writes files and never boots the framework.
 
-Both app-aware commands accept:
+The app-aware commands all accept:
 
 | Option | Default | Effect |
 |---|---|---|
 | `--app-dir` | `$QUIOTE_APP_DIR`, else an upward search | Path to the application directory. |
 | `--env` | `$QUIOTE_ENV`, else `development` | Environment to bootstrap. |
 
-**App-directory resolution order:** `--app-dir`, then `$QUIOTE_APP_DIR`, then an upward search from the current directory for a `Config/settings.*` file. If none is found, the command errors and tells you to pass `--app-dir`, set `$QUIOTE_APP_DIR`, or run from inside an app directory. In practice, running the command from your project root just works.
+**App-directory resolution order:** `--app-dir`, then `$QUIOTE_APP_DIR`, then a `.quiote.json` marker file (`{"app_dir": "...", "env": "..."}`) found by walking up from the current directory, then an upward search from the current directory for a `Config/settings.*` file. If none is found, the command errors and tells you to pass `--app-dir`, set `$QUIOTE_APP_DIR`, or run from inside an app directory. In practice, running the command from your project root just works.
 
 ## `new` — scaffold an application
 
-Creates a self-contained, runnable application: a `Default` module with `Index`, `About`, and `Boom` actions, the minimal config needed to boot (`settings`, `factories`, `routing`, `output_types`), and a FrankenPHP-ready `pub/index.php`.
+Creates a self-contained, runnable application: a `Default` module with `Index`, `About`, `Boom`, and `Contact` actions (the last routed via a `#[Route]` attribute rather than in `AppRouting`, to demonstrate both routing styles), the config needed to boot (`settings`, `factories`, `databases`, `output_types`) plus a PHP `AppRouting` routing class, and a FrankenPHP-ready `pub/index.php`.
 
 ```bash
 vendor/bin/quiote new my-app
@@ -50,7 +56,7 @@ vendor/bin/quiote new my-app
 |---|---|---|
 | `path` (argument, required) | — | Directory to create the application in. |
 | `--namespace` | `App` | PSR-4 namespace prefix for the app (e.g. `App`, `SampleApp`). Must start with an uppercase letter. |
-| `--config-format` | `php` | Format for the generated `settings`/`factories`: `php`, `yaml`, or `xml`. |
+| `--config-format` | `php` | Format for the generated `settings` file: `php`, `yaml`, or `xml`. (The scaffold deliberately mixes formats: `factories` is always YAML and `databases`/`output_types` are always XML, so a generated app exercises all three config drivers.) |
 | `--force`, `-f` | — | Write into a directory that already exists and is non-empty. |
 
 ```bash
@@ -69,7 +75,7 @@ php -S localhost:8000 -t pub pub/index.php   # quick smoke test
 frankenphp php-server --root pub
 ```
 
-The generated app serves `GET /`, `GET /about`, and `GET /boom` — the last deliberately throws, so you can see error handling (set `core.developer_exceptions` true in `Config/settings.*` for the Whoops page). See [Your first application](/getting-started/your-first-app/) for a walkthrough of what it generates.
+The generated app serves `GET /`, `GET /about`, `GET /contact`, and `GET /boom` — `boom` deliberately throws, so you can see error handling (set `core.developer_exceptions` true in `Config/settings.*` for the Whoops page). See [Your first application](/getting-started/your-first-app/) for a walkthrough of what it generates.
 
 ## `routes:list` — list routes
 

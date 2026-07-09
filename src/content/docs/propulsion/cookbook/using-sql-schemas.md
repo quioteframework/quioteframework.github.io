@@ -3,7 +3,7 @@ title: Using SQL Schemas
 description: Group tables into database-level schemas on RDBMS that support them, and mirror that grouping in generated PHP code.
 ---
 
-Some database vendors support "schemas" — namespaces of collections of database objects (tables, views, and so on) within a single database. PostgreSQL and MSSQL, and to a lesser extent MySQL, all provide the ability to group and organize tables into schemas. Propulsion supports tables organized into schemas and works seamlessly in this context; for SQLite, which has no native concept of schemas, Propulsion emulates schema support.
+Some database vendors support "schemas" — namespaces of collections of database objects (tables, views, and so on) within a single database. PostgreSQL and MSSQL, and to a lesser extent MySQL, all provide the ability to group and organize tables into schemas. Propulsion supports tables organized into schemas and works seamlessly in this context. On platforms with no native concept of schemas, such as Oracle and SQLite, the `schema` attribute is ignored for SQL generation purposes.
 
 ## Schema definition
 
@@ -21,7 +21,7 @@ In an XML schema, you can assign every table under a `<database>` tag to a given
 ```
 
 :::note
-On RDBMS that don't support SQL schemas (Oracle), the `schema` attribute is ignored.
+On RDBMS that don't support SQL schemas (Oracle, SQLite), the `schema` attribute is ignored.
 :::
 
 You can also assign a table to a schema individually, overriding whatever `schema` its parent `<database>` declares:
@@ -66,7 +66,7 @@ CREATE TABLE "bookstore"."book"
 ```
 
 :::note
-Propulsion does not create the schema itself. The target database must already contain the required schemas, and the database user Propulsion connects as must have access to them.
+On PostgreSQL, Propulsion emits a `CREATE SCHEMA` statement for every distinct schema referenced by the `schema` attribute, so the schema itself doesn't need to already exist — the database user Propulsion connects as does, however, need the privileges to create it. Other platforms may still require the target schema to already exist.
 :::
 
 ## Schemas in PHP code
@@ -90,9 +90,9 @@ You can tell Propulsion to copy the `schema` attribute onto both the `package` a
 <?php
 // build.php
 return [
-    'propulsion.generator.schema.autoPackage'   => true,
-    'propulsion.generator.schema.autoNamespace' => true,
+    'propulsion.schema.autoPackage'   => true,
+    'propulsion.schema.autoNamespace' => true,
 ];
 ```
 
-With this configuration, a `book` table assigned to the `bookstore` schema generates a `Bookstore\Book` Active Record class under a `bookstore/` subdirectory.
+With this configuration, a `book` table assigned to the `bookstore` schema generates a `bookstore\Book` Active Record class under a `bookstore/` subdirectory — the `namespace`/`package` values are copied verbatim from the `schema` attribute, so their casing follows whatever case you used for `schema`.

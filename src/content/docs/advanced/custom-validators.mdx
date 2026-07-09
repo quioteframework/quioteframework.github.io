@@ -3,7 +3,17 @@ title: Writing a custom validator
 description: The Validator base class contract, the validators.xml format, and wiring a custom validator in XML or PHP.
 ---
 
-[Advanced validation](/advanced/advanced-validation/) shows how to plug a custom validator in with `raw()`. This page goes a level down: the `Validator` base class contract, the `validators.xml` file format, and how validators are discovered and compiled — what you need when a built-in validator won't do.
+A **validator** is a small class that inspects one or more request parameters and decides whether they are acceptable — and, optionally, sanitizes them. Quiote ships validators for the common cases (`string`, `email`, `number`, `regex`, and more), but when none of them fit — an IBAN, a password strength score, a domain-specific rule — you write your own.
+
+This page is for that case. [Validation](/basics/validation/) covers using the built-ins and [Advanced validation](/advanced/advanced-validation/) shows the quick way to slot a custom class in with `raw()`. Here we go a level down: the `Validator` base class contract, the `validators.xml` file format, and how validators are discovered, compiled, and run.
+
+:::note[How a validator fits in a request]
+Validators don't run when you construct them — they run as part of the request pipeline, just before your action. In short:
+
+> `RoutingMiddleware` resolves the action → `SecurityMiddleware` checks access → **`ValidationMiddleware`** compiles the action's validators, runs them against the request, and prunes every parameter that no validator claimed → `DispatchMiddleware` runs the action, which now reads only validated (and optionally sanitized) input.
+
+So a validator does two jobs at once: it *checks* a field, and — because of that pruning — it is what *makes the field readable* to the action at all. See [The middleware pipeline](/architecture/middleware-pipeline/) and [strict parameter access](/basics/requests-and-responses/#strict-parameter-access).
+:::
 
 ## The Validator contract
 

@@ -54,10 +54,34 @@ return [
 </TabItem>
 </Tabs>
 
+<Tabs syncKey="config-format">
+<TabItem label="PHP">
+
 ```php
 // Config/settings.php
 'mcp.enabled' => true,
 ```
+
+</TabItem>
+<TabItem label="YAML">
+
+```yaml
+# Config/settings.yaml
+mcp.enabled: true
+```
+
+</TabItem>
+<TabItem label="XML">
+
+```xml
+<!-- Config/settings.xml -->
+<settings prefix="mcp.">
+    <setting name="enabled">true</setting>
+</settings>
+```
+
+</TabItem>
+</Tabs>
 
 `McpPlugin` publishes every `mcp.*` default (all opt-in-safe — `mcp.enabled` itself defaults to `false`), registers the `mcp:serve`/`mcp:warmup` console commands, and — only when `http` is in `mcp.transports` — splices `McpEndpointMiddleware` (and, unless `mcp.auth = 'none'`, `McpAuthMiddleware` ahead of it) into the pipeline just before `SecurityMiddleware`. See [Settings reference](#settings-reference) for the full key set.
 
@@ -125,10 +149,39 @@ The default (`mcp.transports = ['stdio']`) and the simplest to ship — no HTTP 
 
 Add `'http'` to `mcp.transports` to register `Quiote\Mcp\Middleware\McpEndpointMiddleware` in the pipeline, listening on `mcp.path` (default `/mcp`). It sits *before* `SecurityMiddleware` — MCP does its own bearer/token auth, not session credentials — reads the already-parsed JSON body, and returns transport-level errors as [Problem Details](/architecture/error-handling/) with JSON-RPC error objects for protocol-level failures.
 
+<Tabs syncKey="config-format">
+<TabItem label="PHP">
+
 ```php
 // Config/settings.php
 'mcp.transports' => ['stdio', 'http'],
 ```
+
+</TabItem>
+<TabItem label="YAML">
+
+```yaml
+# Config/settings.yaml
+mcp.transports:
+  - stdio
+  - http
+```
+
+</TabItem>
+<TabItem label="XML">
+
+```xml
+<!-- Config/settings.xml -->
+<settings prefix="mcp.">
+    <setting name="transports">
+        <ae:parameter>stdio</ae:parameter>
+        <ae:parameter>http</ae:parameter>
+    </setting>
+</settings>
+```
+
+</TabItem>
+</Tabs>
 
 Only the stateful `2025-11-25` protocol mode is implemented (`mcp.protocol_version` defaults to it); the installed SDK version's `StreamableHttpTransport` doesn't implement GET/SSE streaming at all, only `OPTIONS`/`POST`/`DELETE`. `mcp.stateless` exists as a config knob for the forthcoming stateless `2026-07-28` mode but that mode isn't implemented yet — see [What isn't built yet](#what-isnt-built-yet).
 
@@ -141,7 +194,26 @@ The HTTP endpoint is safe by default: with no `mcp.auth_token` configured, `Quio
 'mcp.auth_token' => getenv('QUIOTE_MCP_TOKEN') ?: null,
 ```
 
-For a trusted network, or a reverse proxy that already authenticates, `mcp.auth = 'none'` is the explicit escape hatch (and skips registering `McpAuthMiddleware` at all). There's no OAuth 2.1 or RBAC-gated tool listing yet — see below.
+`mcp.auth_token` is an ordinary setting, so it can also live in `Config/settings.yaml` or `Config/settings.xml` (see [Configuration](/architecture/configuration/)) — reading it from an environment variable, as above, is a PHP idiom the other formats don't offer.
+
+For a trusted network, or a reverse proxy that already authenticates, `mcp.auth = 'none'` is the explicit opt-out — a deliberate, last-resort override that also skips registering `McpAuthMiddleware` entirely. There's no OAuth 2.1 or RBAC-gated tool listing yet — see below.
+
+## How an MCP HTTP request is handled
+
+Over stdio there's no pipeline — `mcp:serve` runs the SDK's loop directly against standard in/out. Over **HTTP**, an MCP call is just another request through the app's [middleware pipeline](/architecture/middleware-pipeline/), so it helps to see exactly where the two MCP middlewares sit and what each does.
+
+**How the framework registers them.** When `http` is in `mcp.transports`, `McpPlugin::register()` splices two middlewares in, both anchored `before: SecurityMiddleware` (MCP does its own bearer auth, so it must run ahead of session-based security and CSRF):
+
+- `McpEndpointMiddleware` — registered first, so its anchor exists for the next one to reference.
+- `McpAuthMiddleware` — registered only when `mcp.auth != 'none'`, anchored `before: McpEndpointMiddleware`.
+
+Once the [topological resolver](/architecture/middleware-pipeline/#the-stack-in-order) orders the pipeline, the two land in this runtime order: **`McpAuthMiddleware` → `McpEndpointMiddleware` → `SecurityMiddleware`**.
+
+**The path a request takes.** Both middlewares first check the request path against `mcp.path` (default `/mcp`); anything else falls straight through to normal MVC dispatch. For a request that *does* target the endpoint:
+
+> Request enters the pipeline → parsed by `PayloadParsingMiddleware` → **`McpAuthMiddleware`** validates the `Authorization: Bearer` token via `McpAuthenticatorInterface` (default `StaticTokenAuthenticator`), returning a 401 Problem Details response on failure → **`McpEndpointMiddleware`** builds an `McpServer` and calls `handleHttp()`, which re-serialises the already-parsed body and hands it to the SDK's `Mcp\Server` over a `StreamableHttpTransport` → the SDK dispatches the JSON-RPC call to the matching **tool handler** → the response is written back.
+
+The tool handler is either a capability you registered on `McpCatalog`, or — for an action exposed with `#[McpTool]` — the `ActionToolAdapter`, which runs the call through `Context::handle()` so it gets the *same* DI resolution, verb dispatch, and validation a real HTTP request would (see [the actions-as-tools bridge](#the-killer-feature-mcptool-on-an-existing-action) above). See [Request lifecycle](/architecture/request-lifecycle/) for the full pipeline this plugs into.
 
 ## Discovery caching
 

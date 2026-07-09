@@ -5,6 +5,17 @@ description: Unit-testing actions and services, driving the full pipeline, and p
 
 Quiote targets long-lived codebases, so it ships a test harness built on **PHPUnit**. The framework's own test suite is the reference: it runs the real container, real config, and (for flow tests) the real middleware pipeline against PSR-7 requests. This page covers the patterns that suite actually uses.
 
+## Which approach to reach for
+
+Quiote gives you several test entry points. Pick by how much of the request you need to exercise:
+
+- **Testing a service, model, or any plain unit?** Extend [`UnitTestCase`](#the-foundation-unittestcase), resolve it from the context, and call it directly. This is the default — reach for it first.
+- **Testing a full request end to end** (routing, middleware, action, view, response)? [Compose the middleware stack yourself](#testing-the-full-pipeline) against a PSR-7 request. This is the most faithful test of dispatch.
+- **Testing just one action's view-name outcome?** [`ActionTestCase`](#the-fragment-harness) skips routing and dispatches a single action.
+- **A test that mutates global state** (locale, environment, default context)? Add [process isolation](#process-isolation) so it can't poison sibling tests.
+
+The rest of the page works through each in that order.
+
 ## Running tests
 
 Tests are driven by PHPUnit through Composer scripts:
@@ -16,7 +27,7 @@ composer test:integration  # database integration tests (Docker / Testcontainers
 composer test:e2e          # end-to-end tests (Docker)
 ```
 
-The default run uses `tests/config/phpunit.xml`, which excludes the `apcu`, `e2e`, and `integration` groups so the common case stays fast and Docker-free. The slower suites are opt-in.
+The default run uses the project's root `phpunit.xml`, which excludes the `apcu`, `e2e`, and `integration` groups so the common case stays fast and Docker-free. The slower suites are opt-in.
 
 ## The foundation: `UnitTestCase`
 
@@ -102,7 +113,6 @@ The framework also ships focused base classes for testing a single MVC fragment 
 |---|---|
 | `ActionTestCase` | One action's dispatch outcome (which view it returns) and validation |
 | `ViewTestCase` | One view's output for an output type |
-| `FlowTestCase` | A full request flow via the controller |
 | `FragmentTestCase` | Shared base for the action/view fragment cases |
 
 `ActionTestCase` is the most useful of these. You set the module and action, seed parameters, optionally run validation, then dispatch and assert on the resolved view name:
@@ -134,7 +144,7 @@ final class SaveUserActionTest extends ActionTestCase
 ```
 
 :::note[These base classes are transitional]
-`ActionTestCase`, `ViewTestCase`, `FlowTestCase`, and `ContainerTestCase` emulate a pre-PSR-7 execution container that has since been removed, and the framework's own suite has largely moved to `UnitTestCase` plus the middleware-composition pattern above. Some assertions on these classes depend on the removed container and will not behave — notably `ViewTestCase`'s response/header/cookie assertions and `ActionTestCase`'s argument assertions unless you called `performValidation()`. `ContainerTestCase` refers to that old *execution* container, **not** the DI container. For new tests, prefer `UnitTestCase` and pipeline composition; use `ActionTestCase` for the view-name-outcome case where it fits.
+`ActionTestCase`, `ViewTestCase`, and `ContainerTestCase` emulate a pre-PSR-7 execution container that has since been removed, and the framework's own suite has largely moved to `UnitTestCase` plus the middleware-composition pattern above. Some assertions on these classes depend on the removed container and will not behave — notably `ViewTestCase`'s response/header/cookie assertions and `ActionTestCase`'s argument assertions unless you called `performValidation()`. `ContainerTestCase` refers to that old *execution* container, **not** the DI container. For new tests, prefer `UnitTestCase` and pipeline composition; use `ActionTestCase` for the view-name-outcome case where it fits.
 :::
 
 ## Process isolation
@@ -167,7 +177,7 @@ The isolation attributes:
 | `ClearIsolationCache` | Clear the compiled-config/cache dir first. |
 | `Bootstrap(false)` | Skip bootstrapping Quiote in the child. |
 
-Under the hood a bootstrap script (`IsolatedBootstrap`) re-establishes a pristine framework in the child process — the test-time equivalent of a fresh worker. The project's `phpunit.xml` sets `QUIOTE_ISOLATION_*` environment variables to configure this suite-wide. Reach for isolation whenever a test mutates global state (environment, locale, default context) that a sibling test could inherit.
+Under the hood, PHPUnit runs the marked test in a separate process (via `RunTestsInSeparateProcesses`) and `PhpUnitTestCase::setUp()` re-establishes a pristine framework in that child process — the test-time equivalent of a fresh worker. The project's `phpunit.xml` sets `QUIOTE_ISOLATION_*` environment variables to configure this suite-wide. Reach for isolation whenever a test mutates global state (environment, locale, default context) that a sibling test could inherit.
 
 ## E2E and integration groups
 

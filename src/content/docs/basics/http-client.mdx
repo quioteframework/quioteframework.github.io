@@ -9,6 +9,8 @@ Nothing here is on by default — the client is opt-in, and its default transpor
 
 ## Configuring a named client
 
+Clients are configured in code rather than in a `Config/*` file. The usual home for that call is a [plugin](/architecture/plugins/)'s `register()` method — the registrar exposes `httpClient()` for exactly this (shown in [Resolving the factory](#resolving-the-factory) below) — so every client is defined once at boot and resolved by name anywhere afterwards.
+
 Register a named client's configuration on the `HttpClientFactory`, then resolve it:
 
 ```php
@@ -43,11 +45,16 @@ $response = $factory->client('github')->get('/repos/quioteframework/quiote');
 $client = $factory->client('github');
 
 $client->get('/user');
-$client->post('/repos/acme/app/issues', ['json' => ['title' => 'Bug']]);
+$client->post('/repos/acme/app/issues', [
+    'headers' => ['Content-Type' => 'application/json'],
+    'body'    => json_encode(['title' => 'Bug']),
+]);
 $client->put('/gists/123', $options);
 $client->delete('/gists/123');
 $client->request('PATCH', '/issues/1', $options);
 ```
+
+The options array these convenience methods accept has exactly two keys — `headers` (a `name => value` map) and `body` (a raw string). There is **no `json` option**: encode the payload yourself with `json_encode()` and set `Content-Type` in `headers`, as above. `$options` in the `put`/`request` calls is just such an array.
 
 ## Resolving the factory
 

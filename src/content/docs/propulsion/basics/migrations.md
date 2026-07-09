@@ -183,7 +183,7 @@ class PropulsionMigration_1751586400
 
     public function postUp($manager)
     {
-        $pdo = $manager->getAdapterConnection('bookstore');
+        $pdo = $manager->getPdoConnection('bookstore');
         $stmt = $pdo->prepare("INSERT INTO author (first_name, last_name) VALUES ('Leo', 'Tolstoy')");
         $stmt->execute();
     }
